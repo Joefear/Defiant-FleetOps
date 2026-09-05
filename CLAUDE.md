@@ -44,7 +44,49 @@ These repository instructions and the shared coding standards must not reinterpr
 
 ## Workflow
 
-- Claude Code may make narrow corrective edits during an authorized sanity/debug pass when needed.
+- During independent review, corrective edits in an authorized sanity/debug pass are limited to NON-BEHAVIORAL defects under the boundary below.
 - After corrections, rerun the relevant tests.
 - Commit and push only when the active workflow explicitly says Claude should do so after PASS.
 - Never add Claude, Anthropic, AI, model, agent, or tool attribution to commits or repository content.
+
+## INDEPENDENT REVIEW CORRECTIVE BOUNDARY
+
+During an independent review, Claude Code may correct only NON-BEHAVIORAL defects during an authorized sanity/debug pass, including:
+
+- Comments.
+- Docstrings.
+- Whitespace.
+- Formatting.
+- Spelling.
+- Documentation clarity that does not change contracts.
+- Similarly mechanical repository hygiene.
+
+Claude Code must NOT repair behavioral implementation defects during the independent review.
+
+Behavioral defects include, but are not limited to:
+
+- Incorrect application logic.
+- Database permission errors.
+- Incorrect SQL behavior.
+- Broken authorization.
+- Incorrect RLS policy.
+- Transaction/concurrency errors.
+- Migration behavior.
+- Incorrect API behavior.
+- Test weakness requiring implementation changes.
+- Security behavior.
+- Data-integrity behavior.
+
+If Claude finds a behavioral defect:
+
+1. Declare the review BLOCKED.
+2. Identify the defect and governing contract.
+3. Make no behavioral fix.
+4. Do not commit.
+5. Do not push.
+6. Return the issue to Codex for correction.
+7. Independently review the resulting Codex correction afterward.
+
+The reviewer must never become the implementer of the behavior it is supposed to independently verify.
+
+Non-behavioral corrections must still be reported and relevant checks rerun.
