@@ -1,1 +1,1 @@
-"""Typed identity and Party persistence; lifecycle workflows remain in later slices."""
+"""Typed identity, Party and catalog persistence; physical workflows arrive in later slices."""

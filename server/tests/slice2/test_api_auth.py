@@ -298,6 +298,8 @@ def test_http_scope_has_no_later_slice_or_user_management_routes(client):
             "/redoc",
         )
     }
+    # Keep an exact current-head allowlist: only the eight authorized Slice 3 routes
+    # extend the original surface. User management and later workflows remain excluded.
     assert methods == {
         ("POST", "/auth/login"),
         ("POST", "/auth/logout"),
@@ -306,4 +308,12 @@ def test_http_scope_has_no_later_slice_or_user_management_routes(client):
         ("GET", "/actors"),
         ("POST", "/parties"),
         ("GET", "/parties"),
+        ("POST", "/items"),
+        ("GET", "/items"),
+        ("GET", "/items/{item_id}"),
+        ("PATCH", "/items/{item_id}"),
+        ("DELETE", "/items/{item_id}"),
+        ("POST", "/external-references"),
+        ("GET", "/external-references"),
+        ("GET", "/external-references/search"),
     }

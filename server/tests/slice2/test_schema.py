@@ -34,6 +34,9 @@ def test_slice2_migration_round_trip_and_seed_contract(database, migrator_connec
         assert migrator_connection.execute(select(users)).all() == []
         assert migrator_connection.execute(select(sessions)).all() == []
         migrator_connection.rollback()
+        # Metadata check targets current head; the seed assertions above remain at 0002.
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stderr
         result = database.migrate("check")
         assert result.returncode == 0, result.stderr
     finally:
@@ -42,18 +45,27 @@ def test_slice2_migration_round_trip_and_seed_contract(database, migrator_connec
         assert result.returncode == 0, result.stderr
 
 
-def test_only_slice2_tables_and_approved_resolver_exist(migrator_connection):
-    expected = {"organizations", "actors", "parties", "party_roles", "users", "sessions"}
-    assert set(TABLES) == expected
-    assert set(
-        migrator_connection.exec_driver_sql(
-            "SELECT tablename FROM pg_tables WHERE schemaname='fleetops'"
-        ).scalars()
-    ) == expected | {"alembic_version"}
-    assert migrator_connection.exec_driver_sql(
-        "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
-        "WHERE n.nspname='fleetops'"
-    ).all() == [("resolve_session",)]
+def test_only_slice2_tables_and_approved_resolver_exist(database, migrator_connection):
+    # Inspect the actual historical revision, not an expanded definition of Slice 2.
+    try:
+        result = database.migrate("downgrade", "0002_identity_auth")
+        assert result.returncode == 0, result.stderr
+        expected = {"organizations", "actors", "parties", "party_roles", "users", "sessions"}
+        assert set(TABLES) == expected
+        assert set(
+            migrator_connection.exec_driver_sql(
+                "SELECT tablename FROM pg_tables WHERE schemaname='fleetops'"
+            ).scalars()
+        ) == expected | {"alembic_version"}
+        assert migrator_connection.exec_driver_sql(
+            "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+            "WHERE n.nspname='fleetops'"
+        ).all() == [("resolve_session",)]
+
+    finally:
+        migrator_connection.rollback()
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("name", sorted(TABLES))

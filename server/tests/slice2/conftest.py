@@ -24,7 +24,10 @@ from fleetops.db.metadata import (
 from fleetops.db.tenancy import RUNTIME_GRANTS, apply_tenant_policy
 from fleetops.settings import Settings
 
-TABLES = {table.name: table for table in metadata.sorted_tables}
+# Keep the Slice 2 proof set fixed as later slices extend shared runtime metadata.
+TABLES = {
+    table.name: table for table in (organizations, actors, parties, party_roles, users, sessions)
+}
 
 
 @dataclass(frozen=True)

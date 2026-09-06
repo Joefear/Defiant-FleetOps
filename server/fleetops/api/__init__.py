@@ -1,1 +1,1 @@
-"""FastAPI identity and authentication endpoints; domain workflows arrive by later slice."""
+"""FastAPI identity, authentication, and tenant-scoped catalog endpoints."""

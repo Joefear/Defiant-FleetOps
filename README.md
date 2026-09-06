@@ -1,8 +1,8 @@
 # Defiant FleetOps
 
-Slice 2 adds organization tenancy, parties, typed actors, local HUMAN authentication,
-opaque bearer sessions, and database-enforced tenant isolation to the Slice 1 foundation.
-It honours D7, D10, D18, A2, ADR-001, ADR-002, and Build Handoff v1.2.
+Slice 3 adds the item catalog, manufacturer membership, and external-reference
+attachment/search to the existing identity and tenancy foundation. It honours D1, D2,
+D7, D13, D18, ADR-001, ADR-002, ADR-003, and Build Handoff v1.2.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
@@ -62,7 +62,7 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head now includes the Slice 2 tables described below.
+bookkeeping table is empty. Head includes the Slice 2 and Slice 3 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -179,7 +179,7 @@ only on issuance, while the database stores its SHA-256 digest. Applying Argon2 
 bearer lookup would add password-hashing cost without addressing the bearer threat model.
 Bearer credentials belong in the Authorization header. JSON org/performer fields are
 rejected; arbitrary headers and query parameters do not confer authority. No password
-reset, role hierarchy, audit table, org-management UI, or Slice 3 capability is included.
+reset, role hierarchy, audit table, or org-management UI is included.
 
 ### Focused acceptance checks
 
@@ -195,5 +195,82 @@ attempts. The complete suite also retains the historical Slice 1 baseline and al
 default-deny/history-permission proofs. AnyIO 4.10.0 is pinned for compatibility with
 the existing Starlette 0.47.3 TestClient while retaining warnings-as-errors.
 
-Slice closure requires independent reviewer approval. No commit, push, or Slice 3 work
+## Slice 3 catalog and external references
+
+Revision `0003_catalog` adds only `items` and `external_references`, their constraints,
+indexes, and RLS/grants. Downgrade to `0002_identity_auth` removes the catalog structures;
+Slice 2 rows, policies, privileges, and `resolve_session` remain intact. Each migration
+owns a frozen schema snapshot; the complete suite checks head against runtime metadata.
+
+Items have permanent UUIDv7 identities. The organization/manufacturer/MPN/revision tuple
+prevents duplicate catalog entries using PostgreSQL 16 `UNIQUE NULLS NOT DISTINCT`.
+Two absent revisions therefore compare as equivalent for duplicate prevention.
+Different revisions and different manufacturers may share an MPN. That tuple never
+replaces the FleetOps ID.
+
+The manufacturer is a same-organization Party with a MANUFACTURER role. A generated
+fixed role discriminator and composite FK reference the existing party-role membership.
+PostgreSQL rejects a vendor-only or cross-tenant manufacturer and prevents removal or
+retyping of a membership still used by an item. Slice 2 definitions and permissions
+are unchanged.
+
+Item UOM is the current catalog default, using TEXT plus a CHECK for:
+EA, M, MM, CM, IN, FT, G, MG, KG, ML, L. Packaging forms are excluded.
+Later PO/receipt records must retain their captured UOM under D13; no historical
+transactional tables are introduced in this slice. Export classification is optional
+text, and the controlled flag may be true while classification is still unknown.
+These fields record catalog facts; no export-control workflow is implemented.
+
+[ADR-003](docs/architecture/ADR-003.md) governs reference cardinality. Only an identical
+attachment to the same explicit entity is a duplicate:
+`(org_id, entity_type, entity_id, system, reference_type, external_value)`.
+ITEM and PARTY are the only supported target types. The service verifies target
+existence and visibility on its authenticated runtime connection under RLS before
+attaching or listing references. The registry can be extended when later targets
+are introduced, with a corresponding CHECK migration.
+
+External-reference search matches system, reference type, and value exactly, including
+case and surrounding whitespace, and returns every matching attachment with its FleetOps
+target ID. Zero, one, and multiple results are all valid. It is never a unique selector
+for a write. Catalog descriptive text is trimmed at the API boundary.
+
+All endpoints below require the existing bearer session and trusted transaction-local
+organization context. Missing/cross-tenant targets return 404; duplicate catalog entries
+or attachments return 409; invalid input or manufacturer relationships return 422.
+Missing or invalid authentication returns 401.
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /items | Create from manufacturer_party_id, manufacturer_part_number, description, uom, serialized; optional revision, export_classification, export_controlled, active. |
+| GET /items | List the authenticated tenant's catalog, including inactive entries. |
+| GET /items/{item_id} | Get by FleetOps UUID only. |
+| PATCH /items/{item_id} | Update catalog descriptive/default fields and active flag. Omitted fields remain unchanged; only revision and export_classification may be explicitly null. |
+| DELETE /items/{item_id} | Deactivate via active=false; preserve the row, identity, and attached references. |
+| POST /external-references | Attach system, reference_type, external_value to explicit entity_type and entity_id. |
+| GET /external-references | List references using required entity_type and entity_id query parameters. |
+| GET /external-references/search | Search using required system, reference_type, external_value query parameters; returns a collection of attachments and target IDs. |
+
+Creation records the session's actor and database creation time. Item updates record
+the current authenticated actor and database update time while preserving original
+creation attribution. These are current catalog metadata, not an operational history
+ledger. Request bodies cannot supply IDs, org scope, performers, or timestamps.
+
+Both new tables use ADR-002's fail-closed RLS and composite tenant-safe ordinary FKs.
+Runtime grants are SELECT/INSERT on both, plus UPDATE only on mutable item fields and
+update attribution/time. Identity, organization, and original creation fields have no
+UPDATE grant. There is no runtime physical DELETE or TRUNCATE grant on either table.
+
+Run the catalog acceptance and adversarial proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice3
+```
+
+The tests cover catalog duplicates including NULL revisions, manufacturer-role membership
+and removal, exact shared-reference cardinality, supported target validation, scoped API
+operations, spoofing, runtime RLS semantics, pool reuse, minimum grants, UOM/classification,
+and migration preservation of Slice 2 data and security. Prior revision proofs inspect
+their actual historical revision and restore head; their original boundaries remain intact.
+
+Slice closure requires independent reviewer approval. No commit, push, or Slice 4 work
 is part of this implementation.

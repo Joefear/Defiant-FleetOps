@@ -162,6 +162,8 @@ def database():
                     for name in (
                         "actors",
                         "alembic_version",
+                        "external_references",
+                        "items",
                         "organizations",
                         "parties",
                         "party_roles",

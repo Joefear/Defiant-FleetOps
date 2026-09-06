@@ -1,16 +1,17 @@
-"""Local HUMAN authentication and minimal Party/Actor persistence for Slice 2."""
+"""Local HUMAN authentication with tenant-scoped Party, Actor, and catalog routes."""
 
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import Connection, select, text
+from sqlalchemy import select, text
 from uuid6 import uuid7
 
+from fleetops.api.catalog import create_catalog_router
+from fleetops.api.context import RequestContext
 from fleetops.api.schemas import (
     ActorCreate,
     ActorOut,
@@ -21,7 +22,6 @@ from fleetops.api.schemas import (
     SessionOut,
 )
 from fleetops.auth import (
-    AuthenticatedIdentity,
     authenticate_password,
     issue_token,
     resolve_identity,
@@ -33,12 +33,6 @@ from fleetops.domain.identity import create_actor, create_party, list_parties
 from fleetops.settings import Settings
 
 bearer = HTTPBearer(auto_error=False)
-
-
-@dataclass(frozen=True)
-class RequestContext:
-    connection: Connection
-    identity: AuthenticatedIdentity
 
 
 def unauthorized() -> HTTPException:
@@ -160,4 +154,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_parties(context: Context):
         return list_parties(context.connection)
 
+    app.include_router(create_catalog_router(authenticated))
     return app
