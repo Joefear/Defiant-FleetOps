@@ -1,1 +1,1 @@
-"""Typed identity, Party and catalog persistence; physical workflows arrive in later slices."""
+"""Typed identity, Party, catalog, and space persistence; movement remains deferred."""

@@ -73,6 +73,9 @@ def test_catalog_migration_round_trip_preserves_slice2(database, catalog_data, m
             result = database.migrate(operation, revision)
             assert result.returncode == 0, result.stderr
             assert slice2_snapshot(migrator_connection) == before
+        # Compare runtime metadata only after restoring the current head.
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stderr
         result = database.migrate("check")
         assert result.returncode == 0, result.stderr
         for table in (items, external_references):
@@ -83,72 +86,82 @@ def test_catalog_migration_round_trip_preserves_slice2(database, catalog_data, m
         assert result.returncode == 0, result.stderr
 
 
-def test_catalog_schema_has_only_opened_tables_and_internal_primary_keys(migrator_connection):
-    connection = migrator_connection
-    assert set(
-        connection.exec_driver_sql(
-            "SELECT tablename FROM pg_tables WHERE schemaname='fleetops'"
-        ).scalars()
-    ) == {
-        "alembic_version",
-        "organizations",
-        "actors",
-        "parties",
-        "party_roles",
-        "users",
-        "sessions",
-        "items",
-        "external_references",
-    }
-    assert connection.exec_driver_sql(
-        "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
-        "WHERE n.nspname='fleetops'"
-    ).all() == [("resolve_session",)]
-    for table in (items, external_references):
-        constraints = dict(
+def test_catalog_schema_has_only_opened_tables_and_internal_primary_keys(
+    database, migrator_connection
+):
+    # Inspect the historical Slice 3 boundary without broadening its original assertions.
+    result = database.migrate("downgrade", "0003_catalog")
+    assert result.returncode == 0, result.stderr
+    try:
+        connection = migrator_connection
+        assert set(
             connection.exec_driver_sql(
-                "SELECT contype, pg_get_constraintdef(oid) FROM pg_constraint "
-                "WHERE conrelid=%s::regclass AND contype='p'",
-                (f"fleetops.{table.name}",),
-            ).all()
+                "SELECT tablename FROM pg_tables WHERE schemaname='fleetops'"
+            ).scalars()
+        ) == {
+            "alembic_version",
+            "organizations",
+            "actors",
+            "parties",
+            "party_roles",
+            "users",
+            "sessions",
+            "items",
+            "external_references",
+        }
+        assert connection.exec_driver_sql(
+            "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+            "WHERE n.nspname='fleetops'"
+        ).all() == [("resolve_session",)]
+        for table in (items, external_references):
+            constraints = dict(
+                connection.exec_driver_sql(
+                    "SELECT contype, pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid=%s::regclass AND contype='p'",
+                    (f"fleetops.{table.name}",),
+                ).all()
+            )
+            assert constraints == {"p": "PRIMARY KEY (id)"}
+            assert (
+                connection.exec_driver_sql(
+                    "SELECT attnotnull FROM pg_attribute "
+                    "WHERE attrelid=%s::regclass AND attname='org_id'",
+                    (f"fleetops.{table.name}",),
+                ).scalar_one()
+                is True
+            )
+        assert connection.exec_driver_sql(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid='fleetops.items'::regclass AND conname='uq_items_catalog_entry'"
+        ).scalar_one() == (
+            "UNIQUE NULLS NOT DISTINCT (org_id, manufacturer_party_id, "
+            "manufacturer_part_number, revision)"
         )
-        assert constraints == {"p": "PRIMARY KEY (id)"}
+        uniques = set(
+            connection.exec_driver_sql(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid='fleetops.external_references'::regclass AND contype='u'"
+            ).scalars()
+        )
+        assert uniques == {
+            "UNIQUE (org_id, id)",
+            "UNIQUE (org_id, entity_type, entity_id, system, reference_type, external_value)",
+        }
         assert (
             connection.exec_driver_sql(
-                "SELECT attnotnull FROM pg_attribute "
-                "WHERE attrelid=%s::regclass AND attname='org_id'",
-                (f"fleetops.{table.name}",),
+                "SELECT indisunique FROM pg_index "
+                "WHERE indexrelid='fleetops.ix_external_references_search'::regclass"
             ).scalar_one()
-            is True
+            is False
         )
-    assert connection.exec_driver_sql(
-        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-        "WHERE conrelid='fleetops.items'::regclass AND conname='uq_items_catalog_entry'"
-    ).scalar_one() == (
-        "UNIQUE NULLS NOT DISTINCT (org_id, manufacturer_party_id, "
-        "manufacturer_part_number, revision)"
-    )
-    uniques = set(
-        connection.exec_driver_sql(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conrelid='fleetops.external_references'::regclass AND contype='u'"
-        ).scalars()
-    )
-    assert uniques == {
-        "UNIQUE (org_id, id)",
-        "UNIQUE (org_id, entity_type, entity_id, system, reference_type, external_value)",
-    }
-    assert (
-        connection.exec_driver_sql(
-            "SELECT indisunique FROM pg_index "
-            "WHERE indexrelid='fleetops.ix_external_references_search'::regclass"
-        ).scalar_one()
-        is False
-    )
-    assert (
-        connection.exec_driver_sql(
-            "SELECT atttypid::regtype::text FROM pg_attribute "
-            "WHERE attrelid='fleetops.items'::regclass AND attname='uom'"
-        ).scalar_one()
-        == "text"
-    )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT atttypid::regtype::text FROM pg_attribute "
+                "WHERE attrelid='fleetops.items'::regclass AND attname='uom'"
+            ).scalar_one()
+            == "text"
+        )
+    finally:
+        migrator_connection.rollback()
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stderr

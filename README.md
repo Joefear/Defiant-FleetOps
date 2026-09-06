@@ -1,8 +1,8 @@
 # Defiant FleetOps
 
-Slice 3 adds the item catalog, manufacturer membership, and external-reference
-attachment/search to the existing identity and tenancy foundation. It honours D1, D2,
-D7, D13, D18, ADR-001, ADR-002, ADR-003, and Build Handoff v1.2.
+Slice 4 adds tenant-owned facilities, hierarchical locations, and complete ancestry
+resolution to the existing identity, tenancy, and catalog foundation. It honours
+D10, D11, D18, ADR-001, ADR-002, and Build Handoff v1.2.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
@@ -62,7 +62,7 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head includes the Slice 2 and Slice 3 tables described below.
+bookkeeping table is empty. Head includes the Slice 2, Slice 3, and Slice 4 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -272,5 +272,72 @@ operations, spoofing, runtime RLS semantics, pool reuse, minimum grants, UOM/cla
 and migration preservation of Slice 2 data and security. Prior revision proofs inspect
 their actual historical revision and restore head; their original boundaries remain intact.
 
-Slice closure requires independent reviewer approval. No commit, push, or Slice 4 work
+
+## Slice 4 facilities and locations
+
+Revision `0004_space` adds only `facilities` and `locations`, indexes, constraints,
+and RLS/grants. It honours D10, D11, D18, ADR-001, ADR-002, and Build Handoff v1.2.
+Downgrade to `0003_catalog` removes space tables; prior rows, constraints, indexes,
+ownership, policies, grants, and the authentication resolver remain intact.
+
+Both entities use server-assigned UUIDv7 identity, authenticated organization and Actor
+attribution, an active flag, and server-side timezone-aware creation timestamps.
+Facility timezone is IANA metadata, validated using Python's local `zoneinfo` database
+and the explicitly pinned `tzdata` fallback. Validation performs no network access.
+Invalid keys are rejected before insertion. Facility timezone never changes the
+connection timezone or converts persisted timestamps into local wall time.
+
+Locations belong to exactly one facility. The composite `(org_id, facility_id)` FK
+prevents referencing another tenant's facility. The parent FK carries
+`(org_id, facility_id, parent_location_id)`, targeting a unique
+`(org_id, facility_id, id)` key. A root has a null parent. PostgreSQL rejects missing,
+cross-tenant, and cross-facility parents. Location kind is TEXT plus a CHECK for exactly
+SITE, ROOM, RACK, BIN, STATION, DOCK, VEHICLE, OTHER.
+
+Codes are unique within `(org_id, facility_id)`; the same code may occur in different
+facilities. API text is trimmed at the boundary and code case is preserved.
+The database rejects direct self-parenting. Creation assigns a fresh server UUID and
+requires any parent to exist; there is no parent reassignment operation.
+
+Every route below requires the existing bearer session and transaction-local RLS context.
+Bodies reject caller-supplied identity, organization, performer, and timestamps.
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /facilities | Create from name, timezone, and optional active (default true). |
+| GET /facilities | List visible facilities, including inactive entries. |
+| POST /locations | Create from facility_id, code, name, kind, optional parent_location_id (default null), and optional active (default true). |
+| GET /locations | List visible locations, including inactive entries. |
+| GET /locations/{location_id}/path | Return full location records in deterministic root-to-target order. |
+
+Path resolution uses one recursive PostgreSQL CTE on the runtime RLS connection.
+Each recursive join requires the same organization and facility. A visited-ID array
+detects cycles, and a remaining unresolved parent is an error. No arbitrary depth limit
+silently truncates ancestry. Missing and invisible targets both return 404; cyclic or
+incomplete ancestry returns 409 without partial records. Duplicate facility-local codes
+return 409; invalid values or relationships return 422; invalid credentials return 401.
+
+Runtime privileges are SELECT and INSERT only on both space tables. UPDATE, DELETE,
+and TRUNCATE are denied, including column-level UPDATE. The active field has no
+deactivation workflow in this slice. Adding parent-changing operations in a later task
+requires full durable recursive cycle prevention. Arbitrary multi-row SQL can construct
+a deeper cycle despite the direct-self CHECK; the current API cannot issue such writes,
+and path resolution explicitly detects corrupt cycles.
+
+Run the focused PostgreSQL acceptance proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest server/tests/slice4 -v
+```
+
+Tests cover creation and attribution, local timezone validation, root/child paths, all
+eight kinds, database constraints, same-code reuse, strict inputs, authentication,
+fail-closed RLS, adversarial UPDATE/DELETE under temporary test grants, WITH CHECK,
+pool reuse, production privileges, and Slice 3/4 migration round trips. Malformed-path
+tests use actual persisted rows; test-only constraint changes are restored in cleanup.
+
+External-reference targets remain ITEM and PARTY. Space records represent where things
+can be; assets, movement, custody, receiving, and inventory remain deferred.
+
+Slice closure requires independent reviewer approval. No commit, push, or Slice 5 work
 is part of this implementation.

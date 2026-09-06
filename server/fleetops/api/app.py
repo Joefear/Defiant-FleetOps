@@ -21,6 +21,7 @@ from fleetops.api.schemas import (
     PartyOut,
     SessionOut,
 )
+from fleetops.api.space import create_space_router
 from fleetops.auth import (
     authenticate_password,
     issue_token,
@@ -155,4 +156,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return list_parties(context.connection)
 
     app.include_router(create_catalog_router(authenticated))
+    app.include_router(create_space_router(authenticated))
     return app

@@ -1,4 +1,6 @@
-"""SQLAlchemy schema for identity, authentication, and catalog (D1, D2, D7, D13, D18).
+"""SQLAlchemy schema for identity, authentication, catalog, and space.
+
+Governing decisions: D1, D2, D7, D10, D11, D13, D18.
 
 Tenant-safe references always carry org_id. User authentication state is separate from
 typed attribution; a DEVICE actor has no need for a password-bearing user.
@@ -22,6 +24,7 @@ from sqlalchemy import (
 )
 
 from fleetops.domain.actor_types import ActorType
+from fleetops.domain.location_kinds import LocationKind
 from fleetops.domain.party_roles import PartyRole
 from fleetops.domain.reference_types import ReferenceEntityType
 from fleetops.domain.uom import UnitOfMeasure
@@ -346,3 +349,89 @@ Index(
     external_references.c.reference_type,
     external_references.c.external_value,
 )
+
+facilities = Table(
+    "facilities",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("timezone", Text, nullable=False),
+    Column("active", Boolean, server_default=text("true"), nullable=False),
+    Column("created_by_actor_id", Uuid, nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    ),
+    UniqueConstraint("org_id", "id", name="uq_facilities_org_id_id"),
+    ForeignKeyConstraint(["org_id"], ["fleetops.organizations.id"], name="fk_facilities_org"),
+    ForeignKeyConstraint(
+        ["org_id", "created_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_facilities_creator",
+    ),
+    CheckConstraint("length(btrim(name)) BETWEEN 1 AND 200", name="ck_facilities_name"),
+    CheckConstraint("length(btrim(timezone)) BETWEEN 1 AND 200", name="ck_facilities_timezone"),
+)
+locations = Table(
+    "locations",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("facility_id", Uuid, nullable=False),
+    Column("parent_location_id", Uuid),
+    Column("code", Text, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("active", Boolean, server_default=text("true"), nullable=False),
+    Column("created_by_actor_id", Uuid, nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    ),
+    UniqueConstraint("org_id", "id", name="uq_locations_org_id_id"),
+    UniqueConstraint("org_id", "facility_id", "id", name="uq_locations_org_facility_id"),
+    # RACK-01 may exist in two facilities; a code is local geography, not global identity.
+    UniqueConstraint("org_id", "facility_id", "code", name="uq_locations_facility_code"),
+    ForeignKeyConstraint(["org_id"], ["fleetops.organizations.id"], name="fk_locations_org"),
+    ForeignKeyConstraint(
+        ["org_id", "facility_id"],
+        ["fleetops.facilities.org_id", "fleetops.facilities.id"],
+        name="fk_locations_facility",
+    ),
+    # Carrying the facility through the parent key prevents cross-facility ancestry,
+    # including direct SQL writes. NULL parent remains a valid root.
+    ForeignKeyConstraint(
+        ["org_id", "facility_id", "parent_location_id"],
+        ["fleetops.locations.org_id", "fleetops.locations.facility_id", "fleetops.locations.id"],
+        name="fk_locations_parent",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "created_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_locations_creator",
+    ),
+    CheckConstraint(
+        "parent_location_id IS NULL OR parent_location_id <> id",
+        name="ck_locations_not_self_parent",
+    ),
+    CheckConstraint(
+        "kind IN (" + ", ".join(repr(value.value) for value in LocationKind) + ")",
+        name="ck_locations_kind",
+    ),
+    CheckConstraint("length(btrim(code)) BETWEEN 1 AND 200", name="ck_locations_code"),
+    CheckConstraint("length(btrim(name)) BETWEEN 1 AND 200", name="ck_locations_name"),
+)
+Index("ix_facilities_creator", facilities.c.org_id, facilities.c.created_by_actor_id)
+Index("ix_locations_creator", locations.c.org_id, locations.c.created_by_actor_id)
+Index(
+    "ix_locations_parent",
+    locations.c.org_id,
+    locations.c.facility_id,
+    locations.c.parent_location_id,
+)
+# The unique indexes already cover tenant/facility lookups.
