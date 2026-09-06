@@ -89,7 +89,7 @@ def database():
     authentication path production will. --rm plus the explicit stop in the finally block
     is deliberate redundancy: a leaked cluster full of test roles is not a fixture.
     """
-    name = f"fleetops-slice1-test-{uuid4().hex}"
+    name = f"fleetops-test-{uuid4().hex}"
     env = os.environ.copy()
     env["POSTGRES_PASSWORD"] = secrets.token_urlsafe(32)
     started = False
@@ -102,7 +102,7 @@ def database():
                 "--name",
                 name,
                 "--label",
-                "fleetops.slice=1",
+                "fleetops.test-session=true",
                 "--publish",
                 "127.0.0.1::5432",
                 "--tmpfs",
@@ -157,16 +157,24 @@ def database():
         engine = create_engine(db.url("fleetops_migrator"), poolclass=NullPool)
         try:
             with engine.connect() as connection:
-                assert user_relations(connection) == [("fleetops", "alembic_version", "r")]
-                assert (
-                    connection.exec_driver_sql(
-                        "SELECT p.proname FROM pg_proc p "
-                        "JOIN pg_namespace n ON n.oid = p.pronamespace "
-                        "WHERE n.nspname NOT IN ('information_schema') "
-                        "AND left(n.nspname, 3) <> 'pg_'"
-                    ).all()
-                    == []
-                )
+                assert user_relations(connection) == [
+                    ("fleetops", name, "r")
+                    for name in (
+                        "actors",
+                        "alembic_version",
+                        "organizations",
+                        "parties",
+                        "party_roles",
+                        "sessions",
+                        "users",
+                    )
+                ]
+                assert connection.exec_driver_sql(
+                    "SELECT p.proname FROM pg_proc p "
+                    "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                    "WHERE n.nspname NOT IN ('information_schema') "
+                    "AND left(n.nspname, 3) <> 'pg_'"
+                ).all() == [("resolve_session",)]
         finally:
             engine.dispose()
     finally:

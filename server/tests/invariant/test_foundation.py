@@ -1,9 +1,8 @@
 """Invariants every later slice inherits: PostgreSQL 16, two unprivileged roles, empty baseline."""
 
-from conftest import user_relations
+from conftest import assert_migration_succeeded, user_relations
 
 from fleetops.db.grants import grant_immutable_history
-from fleetops.db.metadata import metadata
 
 
 def test_server_is_postgresql_16(migrator_connection):
@@ -32,15 +31,28 @@ def test_roles_are_unprivileged_and_independent(migrator_connection, app_connect
         )
 
 
-def test_baseline_contains_only_alembic_version(migrator_connection):
-    assert not metadata.tables
-    assert user_relations(migrator_connection) == [("fleetops", "alembic_version", "r")]
-    assert (
-        migrator_connection.exec_driver_sql(
-            "SELECT version_num FROM fleetops.alembic_version"
-        ).scalar_one()
-        == "0001_empty_baseline"
-    )
+def test_baseline_contains_only_alembic_version(database, migrator_connection):
+    # Head now contains Slice 2. Prove the historical empty baseline by actually
+    # downgrading to it, then restore head; do not relabel domain tables as "empty".
+    try:
+        assert_migration_succeeded(database.migrate("downgrade", "0001_empty_baseline"))
+        assert user_relations(migrator_connection) == [("fleetops", "alembic_version", "r")]
+        assert (
+            migrator_connection.exec_driver_sql(
+                "SELECT version_num FROM fleetops.alembic_version"
+            ).scalar_one()
+            == "0001_empty_baseline"
+        )
+        assert (
+            migrator_connection.exec_driver_sql(
+                "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname='fleetops'"
+            ).scalar_one()
+            == 0
+        )
+    finally:
+        migrator_connection.rollback()
+        assert_migration_succeeded(database.migrate("upgrade", "head"))
 
 
 def test_schema_and_version_table_are_migrator_owned(migrator_connection):

@@ -1,7 +1,10 @@
-"""SQLAlchemy schema for identity and authentication only (D7, D10, D18).
+"""Organizations, typed attribution, local users, and opaque sessions.
 
-Tenant-safe references always carry org_id. User authentication state is separate from
-typed attribution; a DEVICE actor has no need for a password-bearing user.
+Revision ID: 0002_identity_auth
+Revises: 0001_empty_baseline
+
+This revision owns a schema snapshot: future runtime metadata changes must not alter
+what upgrading through 0002 creates. No password-bearing user is seeded here.
 """
 
 from sqlalchemy import (
@@ -21,8 +24,13 @@ from sqlalchemy import (
     text,
 )
 
-from fleetops.domain.actor_types import ActorType
-from fleetops.domain.party_roles import PartyRole
+from alembic import op
+from fleetops.db.tenancy import apply_tenant_policy
+
+revision = "0002_identity_auth"
+down_revision = "0001_empty_baseline"
+branch_labels = None
+depends_on = None
 
 metadata = MetaData(schema="fleetops")
 
@@ -67,10 +75,7 @@ actors = Table(
         ["fleetops.actors.org_id", "fleetops.actors.id"],
         name="fk_actors_creator",
     ),
-    CheckConstraint(
-        "type IN (" + ", ".join(repr(value.value) for value in ActorType) + ")",
-        name="ck_actors_type",
-    ),
+    CheckConstraint("type IN ('HUMAN', 'SYSTEM', 'DEVICE', 'INTEGRATION')", name="ck_actors_type"),
     CheckConstraint("length(btrim(display_name)) BETWEEN 1 AND 200", name="ck_actors_display_name"),
 )
 parties = Table(
@@ -119,7 +124,7 @@ party_roles = Table(
         name="fk_party_roles_party",
     ),
     CheckConstraint(
-        "role IN (" + ", ".join(repr(value.value) for value in PartyRole) + ")",
+        "role IN ('VENDOR', 'MANUFACTURER', 'CUSTOMER', 'CARRIER', 'SUBCONTRACTOR', 'INTERNAL')",
         name="ck_party_roles_role",
     ),
 )
@@ -190,3 +195,81 @@ sessions = Table(
 Index("ix_actors_creator", actors.c.org_id, actors.c.created_by_actor_id)
 Index("ix_parties_creator", parties.c.org_id, parties.c.created_by_actor_id)
 Index("ix_sessions_user", sessions.c.org_id, sessions.c.user_id)
+
+
+def upgrade() -> None:
+    connection = op.get_bind()
+    metadata.create_all(connection, checkfirst=False)
+    for table in metadata.sorted_tables:
+        apply_tenant_policy(
+            connection,
+            table,
+            privileges=("SELECT",) if table.name == "organizations" else ("SELECT", "INSERT"),
+        )
+    # Revocation changes only the active flag; the app cannot replace a credential,
+    # move it to another user, extend its lifetime, or rewrite its capture time.
+    connection.exec_driver_sql("GRANT UPDATE (active) ON fleetops.sessions TO fleetops_app")
+    # ADR-002's only context-free exception. Ownership bypass is intentional and is
+    # constrained by exact credential matching and explicit same-tenant active checks.
+    # Fully qualified tables plus the catalog-first path prevent name substitution.
+    connection.exec_driver_sql("""
+CREATE FUNCTION fleetops.resolve_session(token_digest bytea)
+RETURNS TABLE (org_id uuid, user_id uuid, actor_id uuid)
+LANGUAGE sql STABLE STRICT SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $resolver$
+    SELECT s.org_id, u.id, a.id
+    FROM fleetops.sessions AS s
+    JOIN fleetops.users AS u ON u.org_id = s.org_id AND u.id = s.user_id
+    JOIN fleetops.actors AS a ON a.org_id = u.org_id AND a.id = u.actor_id
+    WHERE s.token_digest = $1
+      AND pg_catalog.octet_length($1) = 32
+      AND s.active AND s.expires_at > pg_catalog.statement_timestamp()
+      AND u.active AND a.active AND a.type = 'HUMAN'
+$resolver$
+    """)
+    connection.exec_driver_sql(
+        "REVOKE ALL ON FUNCTION fleetops.resolve_session(bytea) FROM PUBLIC, fleetops_app"
+    )
+    connection.exec_driver_sql(
+        "GRANT EXECUTE ON FUNCTION fleetops.resolve_session(bytea) TO fleetops_app"
+    )
+    # Permanent UUIDv7 bootstrap identities; no credential is a migration input.
+    from uuid import UUID
+
+    organization_id = UUID("01a0744a-17c4-7497-a69b-9da2aa8403da")
+    actor_id = UUID("01a0744a-17c5-72b0-a295-fdf4f7feb13d")
+    party_id = UUID("01a0744a-17c6-7996-bcbc-8d39271a6e0d")
+    connection.execute(organizations.insert().values(id=organization_id, name="Defiant"))
+    # The trusted migration creates the initial attribution identity. Its self-reference
+    # provides the bootstrap root without a NULL creator escape for later runtime rows.
+    connection.execute(
+        actors.insert().values(
+            id=actor_id,
+            org_id=organization_id,
+            type="HUMAN",
+            display_name="Defiant bootstrap",
+            created_by_actor_id=actor_id,
+        )
+    )
+    connection.execute(
+        parties.insert().values(
+            id=party_id,
+            org_id=organization_id,
+            display_name="Defiant",
+            created_by_actor_id=actor_id,
+        )
+    )
+    connection.execute(
+        party_roles.insert().values(
+            id=UUID("01a0744a-17c7-7ebb-b7b7-d212d20fc3a1"),
+            org_id=organization_id,
+            party_id=party_id,
+            role="INTERNAL",
+        )
+    )
+
+
+def downgrade() -> None:
+    op.execute("DROP FUNCTION fleetops.resolve_session(bytea)")
+    metadata.drop_all(op.get_bind(), checkfirst=False)

@@ -1,1 +1,1 @@
-"""Database infrastructure; no domain models in Slice 1."""
+"""PostgreSQL roles, tenant schema, explicit privileges, and transaction-local access."""

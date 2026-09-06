@@ -13,6 +13,9 @@ dependencies = [
   "SQLAlchemy==2.0.43",
   "alembic==1.16.5",
   "psycopg[binary]==3.2.10",
+  "argon2-cffi==25.1.0",
+  "uuid6==2025.0.1",
+  "uvicorn==0.52.4",
 ]
 
 [project.optional-dependencies]
