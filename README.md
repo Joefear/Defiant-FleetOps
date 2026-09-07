@@ -296,7 +296,8 @@ SITE, ROOM, RACK, BIN, STATION, DOCK, VEHICLE, OTHER.
 
 Codes are unique within `(org_id, facility_id)`; the same code may occur in different
 facilities. API text is trimmed at the boundary and code case is preserved.
-The database rejects direct self-parenting. Creation assigns a fresh server UUID and
+The database rejects direct self-parenting and deeper cycles, including cycles
+submitted in one multi-row INSERT. Creation assigns a fresh server UUID and
 requires any parent to exist; there is no parent reassignment operation.
 
 Every route below requires the existing bearer session and transaction-local RLS context.
@@ -319,10 +320,14 @@ return 409; invalid values or relationships return 422; invalid credentials retu
 
 Runtime privileges are SELECT and INSERT only on both space tables. UPDATE, DELETE,
 and TRUNCATE are denied, including column-level UPDATE. The active field has no
-deactivation workflow in this slice. Adding parent-changing operations in a later task
-requires full durable recursive cycle prevention. Arbitrary multi-row SQL can construct
-a deeper cycle despite the direct-self CHECK; the current API cannot issue such writes,
-and path resolution explicitly detects corrupt cycles.
+deactivation workflow in this slice. Corrective revision `0005_space_cycle_guard`
+adds a non-deferrable AFTER INSERT constraint trigger. Its VOLATILE SECURITY INVOKER
+function sees the complete statement, follows same-tenant/facility ancestry under RLS,
+and rejects cycles atomically with SQLSTATE 23514 / `ck_locations_acyclic`.
+It grants no runtime EXECUTE or additional table privileges. Downgrade removes only
+the guard and its function, restoring historical 0004 behavior. Parent-changing
+operations remain deferred and require renewed concurrency analysis. Path resolution
+retains defensive cycle detection for deliberately corrupted or legacy data.
 
 Run the focused PostgreSQL acceptance proofs with:
 

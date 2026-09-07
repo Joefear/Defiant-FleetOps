@@ -18,19 +18,29 @@ def test_space_path_without_context_is_not_found(space_data, app_connection):
 def test_space_path_detects_persisted_cycle(
     space_data, space_values, migrator_connection, app_connection, space_client
 ):
-    # Owner-only corruption setup: one multi-row statement satisfies the FK yet forms
-    # a cycle. The production create API assigns fresh IDs and cannot perform this.
+    # Only the owner disables the guard to seed corruption. Re-enable it before
+    # runtime reads, proving the resolver retains its own termination defense.
     a, _ = space_data
     first, second = uuid7(), uuid7()
-    migrator_connection.execute(
-        locations.insert().values(
-            [
-                space_values(a, locations, id=first, code="CYCLE-1", parent_location_id=second),
-                space_values(a, locations, id=second, code="CYCLE-2", parent_location_id=first),
-            ]
-        ),
+    migrator_connection.exec_driver_sql(
+        "ALTER TABLE fleetops.locations DISABLE TRIGGER ck_locations_acyclic"
     )
-    migrator_connection.commit()
+    try:
+        migrator_connection.execute(
+            locations.insert().values(
+                [
+                    space_values(a, locations, id=first, code="CYCLE-1", parent_location_id=second),
+                    space_values(a, locations, id=second, code="CYCLE-2", parent_location_id=first),
+                ]
+            ),
+        )
+        migrator_connection.commit()
+    finally:
+        migrator_connection.rollback()
+        migrator_connection.exec_driver_sql(
+            "ALTER TABLE fleetops.locations ENABLE TRIGGER ck_locations_acyclic"
+        )
+        migrator_connection.commit()
     with app_connection.begin():
         set_organization(app_connection, a.org_id)
         app_connection.exec_driver_sql("SET LOCAL statement_timeout = '2s'")

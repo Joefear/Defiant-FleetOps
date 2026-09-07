@@ -96,6 +96,9 @@ def test_space_migration_round_trip_preserves_prior_data_and_security(
                 == expected
             )
             migrator_connection.rollback()
+        # Historical round trips still inspect 0004; metadata checks require current head.
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stdout + result.stderr
         result = database.migrate("check")
         assert result.returncode == 0, result.stdout + result.stderr
         for table in (facilities, locations):
@@ -131,8 +134,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
-        "WHERE n.nspname='fleetops'"
-    ).all() == [("resolve_session",)]
+        "WHERE n.nspname='fleetops' ORDER BY p.proname"
+    ).all() == [("enforce_location_acyclic",), ("resolve_session",)]
     for table in (facilities, locations):
         columns = {
             row.attname: (row.type, row.attnotnull)

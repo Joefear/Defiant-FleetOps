@@ -90,7 +90,8 @@ def create_location(connection: Connection, *, org_id: UUID, performer_id: UUID,
 
     The composite FKs enforce tenant/facility membership. Server-assigned IDs and
     insert-only operations cannot link an existing ancestor back beneath a new child.
-    The database additionally rejects direct self-parenting.
+    PostgreSQL rejects direct self-parenting and uses an AFTER INSERT ancestry
+    guard to reject deeper cycles, including cycles submitted in one SQL batch.
     """
     with _space_constraints():
         return (

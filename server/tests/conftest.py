@@ -177,8 +177,8 @@ def database():
                     "SELECT p.proname FROM pg_proc p "
                     "JOIN pg_namespace n ON n.oid = p.pronamespace "
                     "WHERE n.nspname NOT IN ('information_schema') "
-                    "AND left(n.nspname, 3) <> 'pg_'"
-                ).all() == [("resolve_session",)]
+                    "AND left(n.nspname, 3) <> 'pg_' ORDER BY p.proname"
+                ).all() == [("enforce_location_acyclic",), ("resolve_session",)]
         finally:
             engine.dispose()
     finally:
