@@ -22,7 +22,6 @@ from fleetops.db.metadata import (
     sessions,
     users,
 )
-from fleetops.settings import Settings
 
 
 @pytest.fixture(scope="session")
@@ -159,7 +158,7 @@ def item_values():
 
 @pytest.fixture
 def catalog_client(database, catalog_data):
-    app = create_app(Settings(database.url("fleetops_app"), catalog_data[0].org_id))
+    app = create_app(database.settings(catalog_data[0].org_id))
     with TestClient(app) as client:
         yield client
 

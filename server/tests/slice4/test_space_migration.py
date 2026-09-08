@@ -73,8 +73,11 @@ def prior_snapshot(connection):
 def test_space_migration_round_trip_preserves_prior_data_and_security(
     database, space_data, migrator_connection
 ):
-    before = prior_snapshot(migrator_connection)
     try:
+        # Capture the historical Slice 4 schema, before later slices add Item support.
+        result = database.migrate("downgrade", "0005_space_cycle_guard")
+        assert result.returncode == 0, result.stdout + result.stderr
+        before = prior_snapshot(migrator_connection)
         for operation, revision in (
             ("downgrade", "0003_catalog"),
             ("upgrade", "0004_space"),
@@ -131,11 +134,27 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "alembic_version",
         "facilities",
         "locations",
+        "assets",
+        "asset_identifiers",
+        "asset_transitions",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
         "WHERE n.nspname='fleetops' ORDER BY p.proname"
-    ).all() == [("enforce_location_acyclic",), ("resolve_session",)]
+    ).all() == [
+        (name,)
+        for name in (
+            "current_authenticated_actor",
+            "enforce_asset_initial_state",
+            "enforce_authenticated_creator",
+            "enforce_authenticated_updater",
+            "enforce_location_acyclic",
+            "issue_session",
+            "resolve_session",
+            "revoke_current_session",
+            "transition_asset",
+        )
+    ]
     for table in (facilities, locations):
         columns = {
             row.attname: (row.type, row.attnotnull)

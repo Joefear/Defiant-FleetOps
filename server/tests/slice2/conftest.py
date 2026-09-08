@@ -22,7 +22,6 @@ from fleetops.db.metadata import (
     users,
 )
 from fleetops.db.tenancy import RUNTIME_GRANTS, apply_tenant_policy
-from fleetops.settings import Settings
 
 # Keep the Slice 2 proof set fixed as later slices extend shared runtime metadata.
 TABLES = {
@@ -123,7 +122,7 @@ def permitted_dml(tenants, migrator_connection, app_connection):
     """
     for name in TABLES:
         migrator_connection.exec_driver_sql(
-            f"GRANT INSERT, UPDATE, DELETE ON fleetops.{name} TO fleetops_app"
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON fleetops.{name} TO fleetops_app"
         )
     migrator_connection.commit()
     try:
@@ -133,15 +132,12 @@ def permitted_dml(tenants, migrator_connection, app_connection):
         migrator_connection.rollback()
         for name, table in TABLES.items():
             apply_tenant_policy(migrator_connection, table, privileges=RUNTIME_GRANTS[name])
-        migrator_connection.exec_driver_sql(
-            "GRANT UPDATE (active) ON fleetops.sessions TO fleetops_app"
-        )
         migrator_connection.commit()
 
 
 @pytest.fixture
 def client(database, tenants):
-    app = create_app(Settings(database.url("fleetops_app"), tenants[0].org_id))
+    app = create_app(database.settings(tenants[0].org_id))
     with TestClient(app) as client:
         yield client
 

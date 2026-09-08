@@ -2,6 +2,7 @@
 
 import pytest
 from conftest import TABLES
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import Column, MetaData, Table, Uuid, select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
@@ -9,7 +10,7 @@ from uuid6 import uuid7
 from fleetops.auth import hash_password, token_digest
 from fleetops.db.metadata import actors, organizations, parties, party_roles, sessions, users
 from fleetops.db.seed import ACTOR_ID, ORGANIZATION_ID, PARTY_ID
-from fleetops.db.tenancy import RUNTIME_GRANTS, apply_tenant_policy, set_organization
+from fleetops.db.tenancy import RUNTIME_GRANTS, apply_tenant_policy
 from fleetops.domain.actor_types import ActorType
 from fleetops.domain.identity import create_actor, create_party
 from fleetops.domain.party_roles import PartyRole
@@ -90,10 +91,13 @@ def test_tenant_tables_are_owned_scoped_and_default_deny(name, migrator_connecti
         ).scalar_one() is (privilege in RUNTIME_GRANTS[name])
     if name == "sessions":
         for column in TABLES[name].columns:
-            assert app_connection.exec_driver_sql(
-                "SELECT has_column_privilege(current_user, %s, %s, 'UPDATE')",
-                ("fleetops.sessions", column.name),
-            ).scalar_one() is (column.name == "active")
+            assert (
+                app_connection.exec_driver_sql(
+                    "SELECT has_column_privilege(current_user, %s, %s, 'UPDATE')",
+                    ("fleetops.sessions", column.name),
+                ).scalar_one()
+                is False
+            )
     assert (
         migrator_connection.exec_driver_sql(
             "SELECT count(*) FROM pg_class c, "
@@ -135,7 +139,7 @@ def test_cross_tenant_foreign_keys_reject_otherwise_valid_ids(
     # so a 23503 here proves a composite FK rather than an application tenant filter.
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             statement = (
                 table.insert().values(id=uuid7(), org_id=a.org_id, **values[name])
                 if operation == "insert"
@@ -145,10 +149,12 @@ def test_cross_tenant_foreign_keys_reject_otherwise_valid_ids(
     assert error.value.orig.sqlstate == "23503"
 
 
-def test_device_actor_has_no_user_and_can_be_attributed(tenants, app_connection):
+def test_device_actor_has_no_user_and_can_be_attributed(
+    tenants, app_connection, migrator_connection
+):
     a, _ = tenants
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         device = create_actor(
             app_connection,
             org_id=a.org_id,
@@ -156,20 +162,36 @@ def test_device_actor_has_no_user_and_can_be_attributed(tenants, app_connection)
             actor_type=ActorType.DEVICE,
             display_name="Test device",
         )
-        assert (
-            app_connection.execute(select(users.c.id).where(users.c.actor_id == device["id"])).all()
-            == []
-        )
-        # This trusted in-process test attributes a persistence write to a typed actor;
-        # it does not invent a device login or an external-integration authentication path.
+        assert device["created_by_actor_id"] == a.ids["actors"]
+    assert (
+        migrator_connection.execute(
+            select(users.c.id).where(users.c.actor_id == device["id"])
+        ).all()
+        == []
+    )
+    migrator_connection.rollback()
+    # Typed evidence remains representable through deliberate admin setup. ADR-006
+    # forbids treating a DEVICE UUID as a production machine credential.
+    with pytest.raises(DBAPIError) as error:
+        with app_connection.begin():
+            set_authenticated(app_connection, a)
+            create_party(
+                app_connection,
+                org_id=a.org_id,
+                performer_id=device["id"],
+                display_name="Unauthenticated device",
+                roles={PartyRole.INTERNAL},
+            )
+    assert error.value.orig.sqlstate == "42501"
+    with migrator_connection.begin():
         party = create_party(
-            app_connection,
+            migrator_connection,
             org_id=a.org_id,
             performer_id=device["id"],
             display_name="Attributed record",
             roles={PartyRole.INTERNAL},
         )
-        assert app_connection.execute(
+        assert migrator_connection.execute(
             select(actors.c.id, actors.c.type)
             .join(
                 parties,
@@ -180,10 +202,12 @@ def test_device_actor_has_no_user_and_can_be_attributed(tenants, app_connection)
         ).one() == (device["id"], "DEVICE")
 
 
-def test_user_cannot_link_to_nonhuman_or_be_retyped(tenants, app_connection, migrator_connection):
+def test_user_cannot_link_to_nonhuman_or_be_retyped(
+    tenants, permitted_dml, app_connection, migrator_connection
+):
     a, _ = tenants
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         device = create_actor(
             app_connection,
             org_id=a.org_id,
@@ -193,7 +217,7 @@ def test_user_cannot_link_to_nonhuman_or_be_retyped(tenants, app_connection, mig
         )
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 users.insert().values(
                     id=uuid7(),
@@ -218,7 +242,7 @@ def test_party_role_set_rejects_duplicates_and_invalid_values(tenants, app_conne
     for role, state in (("INTERNAL", "23505"), ("ERP_ADMIN", "23514")):
         with pytest.raises(DBAPIError) as error:
             with app_connection.begin():
-                set_organization(app_connection, a.org_id)
+                set_authenticated(app_connection, a)
                 app_connection.execute(
                     party_roles.insert().values(
                         id=uuid7(),
@@ -250,7 +274,7 @@ def test_rls_helper_restores_grants_and_resists_permissive_policy(
         )
         migrator_connection.commit()
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             assert (
                 app_connection.execute(
                     select(parties).where(parties.c.id == b.ids["parties"])

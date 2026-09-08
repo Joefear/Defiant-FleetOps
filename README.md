@@ -1,8 +1,8 @@
 # Defiant FleetOps
 
-Slice 4 adds tenant-owned facilities, hierarchical locations, and complete ancestry
-resolution to the existing identity, tenancy, and catalog foundation. It honours
-D10, D11, D18, ADR-001, ADR-002, and Build Handoff v1.2.
+Slice 5 adds Assets, identifiers, immutable lifecycle history, controlled transitions
+and state reconciliation to the identity, catalog and space foundation. It honours
+D1, D3, D7, D8, D10, D11, D12, D18, ADR-001 through ADR-006, and Build Handoff v1.2.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
@@ -36,15 +36,17 @@ absence is checked before the container is stopped.
 
 ## Database foundation
 
-The versioned administrative migration
-`server/fleetops/db/bootstrap_001_roles.sql` creates the two login roles and the
-`fleetops` schema in one transaction on a new, empty, dedicated database/cluster.
-It refuses preexisting FleetOps roles or user objects. An administrative connection
-runs this bootstrap once; neither FleetOps role gets role-creation privileges.
+The administrative bootstrap runs `server/fleetops/db/bootstrap_001_roles.sql`,
+then `bootstrap_002_authenticator.sql`, in one transaction on a new, empty,
+dedicated database/cluster. The first artifact creates the migrator/app roles and
+`fleetops` schema; the forward second artifact creates the independent login-only
+`fleetops_authenticator` role. Fresh bootstrap refuses preexisting FleetOps roles
+or user objects. Role creation stays outside Alembic.
 
 `fleetops_migrator` owns the schema and all subsequent Alembic DDL.
-`fleetops_app` receives only explicit database CONNECT and schema USAGE initially.
-Neither role is superuser, inherits other roles, creates roles/databases, replicates,
+`fleetops_app` and `fleetops_authenticator` receive only explicit database CONNECT
+and schema USAGE initially. All three passwords must be distinct and nonempty.
+None of these roles is superuser, inherits other roles, creates roles/databases, replicates,
 or bypasses row security. PUBLIC loses database access/TEMP and public-schema
 access. Migrator-created objects grant PUBLIC and the app role nothing by default,
 including removal of PostgreSQL's default PUBLIC function EXECUTE.
@@ -57,12 +59,25 @@ shown in `.env.example` into your shell (the file is not loaded automatically):
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
+For an existing installation that already applied bootstrap 001, provision an
+independent authenticator password and run the forward admin step before upgrading:
+
+```powershell
+.\.venv\Scripts\python.exe -m fleetops.db.bootstrap --authenticator-only
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+This command requires the explicit admin bootstrap URL and authenticator password;
+it leaves the existing roles and credentials intact. Alembic owns subsequent object
+grants. Downgrading to 0005 restores historical object privileges while retaining
+the externally bootstrapped authenticator role.
+
 Alembic connects only as an authenticated `fleetops_migrator` on PostgreSQL 16.
 Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head includes the Slice 2, Slice 3, and Slice 4 tables described below.
+bookkeeping table is empty. Head includes the Slice 2 through Slice 5 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -101,10 +116,18 @@ workflow. Creation times and session expiry are server-side UTC timestamps.
 
 ### Database authority
 
-`fleetops_app` gets SELECT on the organization root and SELECT/INSERT on the other
-five tables. Session UPDATE is restricted to `active` for logout. It cannot replace
-a session digest, change its user, extend expiry, update other tenant tables, delete
-tenant rows, or TRUNCATE any tenant table. Bootstrap uses the same runtime role.
+At corrected Slice 5 head, `fleetops_app` has no direct table or column privileges
+on `users` or `sessions`. It cannot enumerate credentials, create users or sessions,
+or directly revoke them. It retains organization SELECT and Actor/Party/role
+SELECT/INSERT. The historical 0002 grants are corrected forward by 0006.
+
+`fleetops_authenticator` reads only the user/Actor columns needed for password and
+active HUMAN checks, under its own restrictive tenant RLS policies. It cannot
+mutate domain rows, read sessions, create users, assume another role, or execute
+Asset transitions. Only this role may call the migrator-owned `issue_session`:
+the function validates the configured org, active HUMAN user, 32-byte digest and
+future expiry capped at 24 hours, and inserts one session with database creation
+time. Argon2 verification and random token generation remain in Python.
 
 The migration helper replaces table and live-column ACLs, enables RLS, and installs
 matching USING/WITH CHECK predicates. A restrictive tenant policy ensures an additional
@@ -117,13 +140,22 @@ to prove RLS independently of the narrower production grants. They assert hidden
 rowcount zero and visible wrong-tenant rejection, then restore the production grants.
 They do not change runtime privileges to make an endpoint work.
 
-`resolve_session(bytea)` is the sole production SECURITY DEFINER function. It is owned
+`resolve_session(bytea)` is the Slice 2 authentication SECURITY DEFINER function. It is owned
 by the migrator, uses qualified tables and `search_path = pg_catalog, pg_temp`, and
 grants EXECUTE only to the runtime role (besides the owner's inherent access). PUBLIC
 has no EXECUTE. An exact valid SHA-256 digest returns only `org_id, user_id, actor_id`.
 Unknown/expired/inactive credentials, users, and actors return no row. The resolver
 writes no data and sets no tenant context; the trusted request dependency sets the
-returned org inside the transaction before ordinary RLS access.
+returned org inside the transaction before ordinary RLS access. ADR-006 also sets
+the presented digest in a transaction-local setting using bound parameters and
+redacted SQL logging. `current_authenticated_actor()` re-resolves that credential
+and requires matching org scope. An Actor UUID setting conveys no authority.
+
+Reusable invoker triggers reject creator mismatches on runtime INSERTs and derive
+Item/Asset updater Actor and database time even for direct descriptive SQL. They
+test the original `session_user`, including inside definer functions, so only
+independent admin setup bypasses runtime attribution. `revoke_current_session()`
+revokes exactly the presented credential and takes no session/user selector.
 
 ### Create the initial user and run the API
 
@@ -134,7 +166,7 @@ file is documentation and is not loaded automatically. The organization identifi
 below is an explicit trusted configuration value, not a fallback used by RLS.
 
 For a fresh installation, run the administrative role bootstrap and Alembic upgrade
-as described above. Then set the runtime URL and invoke the separate initial-user
+as described above. Then set `FLEETOPS_MIGRATOR_URL` and invoke the separate initial-user
 command. Enter the password interactively; do not put a real password in a script,
 migration, fixture, README, or example environment file.
 
@@ -151,6 +183,11 @@ try {
 }
 .\.venv\Scripts\python.exe -m uvicorn fleetops.api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
+
+The API requires both `FLEETOPS_APP_URL` and `FLEETOPS_AUTHENTICATOR_URL`; neither
+has a fallback. Each pool validates its actual PostgreSQL login. Login uses only
+the authenticator pool; authenticated domain requests use the app pool. Initial-user
+bootstrap uses the separate deployment engine and does not require either API URL.
 
 The command requires the configured migration-seeded organization and active bootstrap
 HUMAN actor. It hashes the password with Argon2id and refuses any existing initial user
@@ -346,3 +383,108 @@ can be; assets, movement, custody, receiving, and inventory remain deferred.
 
 Slice closure requires independent reviewer approval. No commit, push, or Slice 5 work
 is part of this implementation.
+
+
+## Slice 5 Assets and controlled lifecycle transitions
+
+Revision `0006_assets` adds `assets`, `asset_identifiers`, `asset_transitions`,
+the `transition_asset` function, and one Item uniqueness constraint supporting
+serialized eligibility. Migrations 0001–0005 remain frozen. Downgrade restores
+0005, including removal of the added Item constraint, while retaining the Location
+cycle guard and prior schema/security.
+
+Assets use permanent server-generated UUIDv7 identity. The editable Asset tag is
+unique within the organization. Owner is required; custodian and location may be
+unknown. Assignment is constrained to NULL until Slice 7. All existing tenant-owned
+references use composite organization keys. A fixed TRUE discriminator and Item FK
+prevent an Asset from referencing a nonserialized Item, including later attempts
+to change an Item already backing an Asset to nonserialized.
+
+Identifiers have one of MANUFACTURER_SERIAL, PCB_SERIAL, MAC, IMEI or OTHER.
+Readable values are unique per organization/type through a partial unique index.
+An unreadable marker uses NULL value and a nonblank reason; it never substitutes
+the string "UNREADABLE" for a missing serial. Multiple unreadable markers are valid.
+
+Production creation belongs to receiving in Slice 9. Slice 5 exposes no Asset
+creation service, onboarding command, identifier-write endpoint or deletion route.
+Only controlled tests create the initial Asset/transition pair: Asset version 1
+and RECEIVED, with result version 1 and NULL → RECEIVED. Later transition from-state
+must be non-null. Asset and transition versions must be positive. An INSERT-only
+database trigger requires every ordinary Asset INSERT, including owner setup, to
+begin at version 1 / RECEIVED. It creates no history and does not restrict later
+transition updates.
+
+`assets.version` is one global optimistic-concurrency token under ADR-005. The
+function resolves the authenticated Actor from organization and credential context,
+then locks the tenant-scoped Asset with SELECT FOR UPDATE before comparing its
+version to the expected version. It validates authoritative latest history,
+requested from-state and the state projection. No Actor argument or old overload
+remains; the additional transition UUID is generated by Python. A successful operation inserts one
+transition with result version N+1 and updates only state/version atomically. The
+lock persists through transaction completion. Stale operations and inconsistent
+history reject without partial writes or silent repair.
+
+State history is ordered by global `result_version`, with uniqueness on
+`(org_id, asset_id, result_version)`. The latest state transition may have a lower
+version than the Asset after future orthogonal operations. There is no contiguous
+transition counter, per-projection version or shared version-register table.
+Reconciliation reports missing history, state mismatch and history ahead of the
+Asset; a lower state-history version alone is valid.
+
+Python owns the lifecycle graph. ON_HOLD exits use the entry state in authoritative
+history, held stable by the same Asset row lock while Python validates the dynamic
+edge and SQL admits it. State transitions leave owner, custodian, location and
+assignment unchanged. RETIRED remains terminal with legal incoming graph edges,
+but production execution fails closed until disposal evidence is verifiable.
+The nullable evidence parameter exists now; a database CHECK rejects every non-null
+`evidence_ref` until Slice 11. Correction and client-operation fields are retained
+as seams only; no correction or idempotency workflow is implemented.
+
+The SQL function accepts asset ID, expected version, from-state, to-state, reason,
+occurrence time, evidence reference, client operation ID, and an additional
+transition UUIDv7 generated by the Python service. It takes no Actor argument. Its owner is fleetops_migrator,
+its search path is fixed to pg_catalog/pg_temp, and PUBLIC EXECUTE is revoked.
+Only fleetops_app receives runtime EXECUTE. The request body cannot supply the
+Actor, organization, result version, recording time, evidence or generated ID.
+Occurrence time must be timezone-aware and is preserved as the reported instant;
+recording time comes from PostgreSQL and never orders authoritative history.
+
+Runtime table grants are SELECT only on all three new tables, plus column UPDATE
+on Asset tag, description and update attribution/time. History INSERT is performed
+only by the controlled function, which pairs it with its projection. No direct
+projection UPDATE, history UPDATE/DELETE, creation INSERT or TRUNCATE is granted.
+All tables retain ADR-002 RLS USING/WITH CHECK and the restrictive tenant boundary.
+
+| Endpoint | Behavior |
+| --- | --- |
+| GET /assets | List the authenticated tenant's Assets. |
+| GET /assets/{asset_id} | Read by FleetOps UUID only. |
+| PATCH /assets/{asset_id} | Edit non-null asset_tag/description; record authenticated updater and database time without incrementing operational version. |
+| GET /assets/{asset_id}/identifiers | Read identifiers captured in controlled fixtures until receiving exists. |
+| POST /assets/{asset_id}/transitions | Accept expected_version, from_state, to_state, reason and aware occurred_at; return the immutable transition. |
+| GET /assets/{asset_id}/transitions | Return result_version ASC, regardless of timestamp/UUID order. |
+| GET /health/assets/reconciliation | Report this tenant's state discrepancies; never repair them. |
+
+All seven routes require bearer authentication. Missing/invisible targets return
+404, stale or inconsistent state/version and duplicate tags return 409, and illegal
+lifecycle edges or invalid inputs return 422. Strict request models reject caller
+identity, attribution, projection and timestamp authority.
+
+Run focused proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice5
+```
+
+The suite covers all executable lifecycle edges; ON_HOLD return-state history;
+retirement fail-closed; initial-history checks; readable/unreadable identifiers;
+serialized Item and tenant-safe references; strict API authority; immutable history
+and projection grants; state/missing-history/impossible-version discrepancies;
+timestamp-independent ordering; future global-version gaps; exact migration round
+trips and Alembic metadata checks. Concurrency proofs use separate runtime logins
+and PostgreSQL-observed blocking to prove exactly one same-version winner and
+post-lock version validation, including lock retention after function return.
+
+Slice 6 movement/custody/ownership, assignment, receiving, evidence, corrections
+and offline capture remain deferred. This implementation awaits independent review;
+no commit or push is performed by the implementation turn.

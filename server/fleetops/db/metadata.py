@@ -1,6 +1,6 @@
-"""SQLAlchemy schema for identity, authentication, catalog, and space.
+"""SQLAlchemy schema for identity, authentication, catalog, space, and Asset history.
 
-Governing decisions: D1, D2, D7, D10, D11, D13, D18.
+Governing decisions: D1, D2, D3, D7, D8, D10, D11, D12, D13, D18; ADR-004/005.
 
 Tenant-safe references always carry org_id. User authentication state is separate from
 typed attribution; a DEVICE actor has no need for a password-bearing user.
@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKeyConstraint,
     Index,
+    Integer,
     LargeBinary,
     MetaData,
     Table,
@@ -24,6 +25,8 @@ from sqlalchemy import (
 )
 
 from fleetops.domain.actor_types import ActorType
+from fleetops.domain.identifier_types import IdentifierType
+from fleetops.domain.lifecycle import AssetState
 from fleetops.domain.location_kinds import LocationKind
 from fleetops.domain.party_roles import PartyRole
 from fleetops.domain.reference_types import ReferenceEntityType
@@ -231,6 +234,7 @@ items = Table(
         nullable=False,
     ),
     UniqueConstraint("org_id", "id", name="uq_items_org_id_id"),
+    UniqueConstraint("org_id", "id", "serialized", name="uq_items_org_id_serialized"),
     # ADR-003: absent revision cannot provide a loophole for duplicate catalog entries.
     # This is duplicate prevention; the permanent UUID remains the entity identity.
     UniqueConstraint(
@@ -435,3 +439,216 @@ Index(
     locations.c.parent_location_id,
 )
 # The unique indexes already cover tenant/facility lookups.
+
+# Slice 5: receipt-owned creation is deliberately absent from the production service.
+assets = Table(
+    "assets",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("item_id", Uuid, nullable=False),
+    # ADR-004: the fixed TRUE key also prevents changing a referenced Item to nonserialized.
+    Column("item_serialized", Boolean, Computed("true", persisted=True), nullable=False),
+    Column("asset_tag", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("owner_party_id", Uuid, nullable=False),
+    Column("custodian_party_id", Uuid),
+    Column("current_location_id", Uuid),
+    Column("current_assignment_id", Uuid),
+    Column("current_state", Text, nullable=False, server_default=text("'RECEIVED'")),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("created_by_actor_id", Uuid, nullable=False),
+    Column("updated_by_actor_id", Uuid, nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    ),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    ),
+    UniqueConstraint("org_id", "id", name="uq_assets_org_id_id"),
+    UniqueConstraint("org_id", "asset_tag", name="uq_assets_tag"),
+    ForeignKeyConstraint(["org_id"], ["fleetops.organizations.id"], name="fk_assets_org"),
+    ForeignKeyConstraint(
+        ["org_id", "item_id"], ["fleetops.items.org_id", "fleetops.items.id"], name="fk_assets_item"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "item_id", "item_serialized"],
+        ["fleetops.items.org_id", "fleetops.items.id", "fleetops.items.serialized"],
+        name="fk_assets_serialized_item",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "owner_party_id"],
+        ["fleetops.parties.org_id", "fleetops.parties.id"],
+        name="fk_assets_owner",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "custodian_party_id"],
+        ["fleetops.parties.org_id", "fleetops.parties.id"],
+        name="fk_assets_custodian",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "current_location_id"],
+        ["fleetops.locations.org_id", "fleetops.locations.id"],
+        name="fk_assets_location",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "created_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_assets_creator",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "updated_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_assets_updater",
+    ),
+    CheckConstraint(
+        "current_state IN (" + ", ".join(repr(s.value) for s in AssetState) + ")",
+        name="ck_assets_state",
+    ),
+    CheckConstraint("version > 0", name="ck_assets_version"),
+    # There is no assignment authority or target table until Slice 7.
+    CheckConstraint("current_assignment_id IS NULL", name="ck_assets_assignment_unavailable"),
+    CheckConstraint("length(btrim(asset_tag)) BETWEEN 1 AND 200", name="ck_assets_tag"),
+    CheckConstraint("length(btrim(description)) BETWEEN 1 AND 4000", name="ck_assets_description"),
+)
+
+asset_identifiers = Table(
+    "asset_identifiers",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("asset_id", Uuid, nullable=False),
+    Column("type", Text, nullable=False),
+    Column("value", Text),
+    Column("unreadable_reason", Text),
+    Column("created_by_actor_id", Uuid, nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    ),
+    UniqueConstraint("org_id", "id", name="uq_asset_identifiers_org_id_id"),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_identifiers_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_identifiers_asset",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "created_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_asset_identifiers_creator",
+    ),
+    CheckConstraint(
+        "type IN (" + ", ".join(repr(t.value) for t in IdentifierType) + ")",
+        name="ck_asset_identifiers_type",
+    ),
+    # An unreadable label is missing evidence, not the world's most common serial number.
+    CheckConstraint(
+        "(value IS NOT NULL AND unreadable_reason IS NULL "
+        "AND length(btrim(value)) BETWEEN 1 AND 500) "
+        "OR (value IS NULL AND unreadable_reason IS NOT NULL "
+        "AND length(unreadable_reason) <= 4000 AND unreadable_reason ~ '[^[:space:]]')",
+        name="ck_asset_identifiers_readability",
+    ),
+)
+Index(
+    "uq_asset_identifiers_readable",
+    asset_identifiers.c.org_id,
+    asset_identifiers.c.type,
+    asset_identifiers.c.value,
+    unique=True,
+    postgresql_where=asset_identifiers.c.value.is_not(None),
+)
+
+asset_transitions = Table(
+    "asset_transitions",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("asset_id", Uuid, nullable=False),
+    # ADR-005: global produced version; gaps within state history are legitimate.
+    Column("result_version", Integer, nullable=False),
+    Column("from_state", Text),
+    Column("to_state", Text, nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("actor_id", Uuid, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "recorded_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("statement_timestamp()"),
+    ),
+    Column("evidence_ref", Uuid),
+    Column("corrects_transition_id", Uuid),
+    Column("client_op_id", Uuid),
+    UniqueConstraint("org_id", "id", name="uq_asset_transitions_org_id_id"),
+    UniqueConstraint("org_id", "asset_id", "id", name="uq_asset_transitions_asset_id"),
+    UniqueConstraint("org_id", "asset_id", "result_version", name="uq_asset_transitions_version"),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_transitions_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_transitions_asset",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_asset_transitions_actor",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id", "corrects_transition_id"],
+        [
+            "fleetops.asset_transitions.org_id",
+            "fleetops.asset_transitions.asset_id",
+            "fleetops.asset_transitions.id",
+        ],
+        name="fk_asset_transitions_corrects",
+    ),
+    CheckConstraint("result_version > 0", name="ck_asset_transitions_version"),
+    CheckConstraint(
+        "from_state IN (" + ", ".join(repr(s.value) for s in AssetState) + ")",
+        name="ck_asset_transitions_from_state",
+    ),
+    CheckConstraint(
+        "to_state IN (" + ", ".join(repr(s.value) for s in AssetState) + ")",
+        name="ck_asset_transitions_to_state",
+    ),
+    CheckConstraint(
+        "(result_version = 1 AND from_state IS NULL AND to_state = 'RECEIVED') "
+        "OR (result_version > 1 AND from_state IS NOT NULL)",
+        name="ck_asset_transitions_initial",
+    ),
+    CheckConstraint("length(btrim(reason)) BETWEEN 1 AND 4000", name="ck_asset_transitions_reason"),
+    # ADR-004: the interface exists now; evidence cannot be verified until Slice 11.
+    CheckConstraint("evidence_ref IS NULL", name="ck_asset_transitions_evidence_unavailable"),
+)
+for table, columns in (
+    (
+        assets,
+        (
+            "item_id",
+            "owner_party_id",
+            "custodian_party_id",
+            "current_location_id",
+            "created_by_actor_id",
+            "updated_by_actor_id",
+        ),
+    ),
+    (asset_identifiers, ("asset_id", "created_by_actor_id")),
+    (asset_transitions, ("actor_id",)),
+):
+    for column in columns:
+        Index(f"ix_{table.name}_{column}", table.c.org_id, table.c[column])

@@ -1,12 +1,12 @@
 """Durable cycle rejection must cover direct runtime SQL, not merely the create API."""
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from fleetops.db.metadata import locations
-from fleetops.db.tenancy import set_organization
 
 
 @pytest.mark.parametrize("size", [2, 3, 12], ids=["two-node", "three-node", "long-cycle"])
@@ -33,7 +33,7 @@ def test_cycle_guard_rejects_one_statement_atomically(
     failure = None
     try:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             assert app_connection.exec_driver_sql("SELECT current_user, session_user").one() == (
                 "fleetops_app",
                 "fleetops_app",
@@ -78,7 +78,7 @@ def test_cycle_guard_allows_complete_multirow_hierarchy(
         for index, row_id in enumerate(ids)
     ]
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         accepted = (
             app_connection.execute(
                 locations.insert()
@@ -110,11 +110,11 @@ def test_cycle_guard_allows_incremental_root_child_grandchild(
             parent_location_id=expected[-1] if expected else None,
         )
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(locations.insert().values(**values))
         expected.append(values["id"])
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         assert [row["id"] for row in location_path(app_connection, expected[-1])] == expected
 
 

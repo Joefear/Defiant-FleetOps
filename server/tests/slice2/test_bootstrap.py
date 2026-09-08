@@ -19,7 +19,9 @@ from fleetops.settings import Settings
 @pytest.fixture
 def bootstrap_environment(database, migrator_connection):
     environment = {
-        "FLEETOPS_APP_URL": database.url("fleetops_app").render_as_string(hide_password=False),
+        "FLEETOPS_MIGRATOR_URL": database.url("fleetops_migrator").render_as_string(
+            hide_password=False
+        ),
         "FLEETOPS_ORG_ID": str(ORGANIZATION_ID),
         "FLEETOPS_BOOTSTRAP_USERNAME": "bootstrap",
         "FLEETOPS_BOOTSTRAP_PASSWORD": secrets.token_urlsafe(24),
@@ -100,6 +102,7 @@ def test_bootstrap_refuses_inactive_seeded_actor(bootstrap_environment, migrator
 @pytest.mark.parametrize(
     "field",
     [
+        "FLEETOPS_MIGRATOR_URL",
         "FLEETOPS_ORG_ID",
         "FLEETOPS_BOOTSTRAP_USERNAME",
         "FLEETOPS_BOOTSTRAP_PASSWORD",
@@ -128,7 +131,11 @@ def test_runtime_configuration_cannot_fall_back_to_privileged_role_or_default_te
     monkeypatch,
 ):
     with pytest.raises(ValueError):
-        Settings(database.url("fleetops_migrator"), ORGANIZATION_ID)
+        Settings(
+            database.url("fleetops_migrator"),
+            ORGANIZATION_ID,
+            database.url("fleetops_authenticator"),
+        )
     monkeypatch.setenv(
         "FLEETOPS_APP_URL", database.url("fleetops_app").render_as_string(hide_password=False)
     )

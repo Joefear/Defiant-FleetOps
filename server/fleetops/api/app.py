@@ -1,4 +1,4 @@
-"""Local HUMAN authentication with tenant-scoped Party, Actor, and catalog routes."""
+"""Local HUMAN authentication with tenant-scoped catalog, space, and Asset routes."""
 
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, text
 from uuid6 import uuid7
 
+from fleetops.api.assets import create_asset_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
 from fleetops.api.schemas import (
@@ -27,9 +28,9 @@ from fleetops.auth import (
     issue_token,
     resolve_identity,
 )
-from fleetops.db.metadata import actors, sessions
-from fleetops.db.session import create_runtime_engine
-from fleetops.db.tenancy import set_organization
+from fleetops.db.metadata import actors
+from fleetops.db.session import create_authenticator_engine, create_runtime_engine
+from fleetops.db.tenancy import set_credential_context, set_organization
 from fleetops.domain.identity import create_actor, create_party, list_parties
 from fleetops.settings import Settings
 
@@ -45,9 +46,10 @@ def unauthorized() -> HTTPException:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Application factory: own and dispose one runtime pool per application lifespan."""
+    """Own and dispose independent ordinary-runtime and login-only connection pools."""
     settings = settings or Settings.from_environment()
     engine = create_runtime_engine(settings)
+    authenticator_engine = create_authenticator_engine(settings)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -55,9 +57,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             engine.dispose()
+            authenticator_engine.dispose()
 
     app = FastAPI(title="Defiant FleetOps", lifespan=lifespan)
     app.state.engine = engine
+    app.state.authenticator_engine = authenticator_engine
 
     def authenticated(
         response: Response,
@@ -76,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if identity is None:
                 raise unauthorized()
             set_organization(connection, identity.organization_id)
+            set_credential_context(connection, identity.token_digest)
             response.headers["Cache-Control"] = "no-store"
             yield RequestContext(connection, identity)
 
@@ -84,8 +89,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/auth/login", response_model=SessionOut)
     def login(body: Login, response: Response):
         # ADR-002 permits trusted single-org configuration only on this intentionally
-        # unauthenticated path. The user lookup still runs as fleetops_app under RLS.
-        with engine.begin() as connection:
+        # unauthenticated path. ADR-006 isolates issuance from ordinary runtime SQL.
+        with authenticator_engine.begin() as connection:
             set_organization(connection, settings.organization_id)
             user = authenticate_password(
                 connection, body.username, body.password.get_secret_value()
@@ -99,13 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             now = connection.execute(text("SELECT statement_timestamp()")).scalar_one()
             expires_at = now + timedelta(seconds=settings.session_seconds)
             connection.execute(
-                sessions.insert().values(
-                    id=uuid7(),
-                    org_id=settings.organization_id,
-                    user_id=user[0],
-                    token_digest=digest,
-                    expires_at=expires_at,
-                )
+                text("SELECT fleetops.issue_session(:user, :session, :digest, :expiry)"),
+                {"user": user[0], "session": uuid7(), "digest": digest, "expiry": expires_at},
             )
         response.headers["Cache-Control"] = "no-store"
         return SessionOut(access_token=raw_token, expires_at=expires_at)
@@ -120,11 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/auth/logout", status_code=204)
     def logout(context: Context) -> Response:
-        context.connection.execute(
-            sessions.update()
-            .where(sessions.c.token_digest == context.identity.token_digest)
-            .values(active=False)
-        )
+        context.connection.execute(text("SELECT fleetops.revoke_current_session()"))
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     @app.post("/actors", response_model=ActorOut, status_code=201)
@@ -157,4 +153,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(create_catalog_router(authenticated))
     app.include_router(create_space_router(authenticated))
+    app.include_router(create_asset_router(authenticated))
     return app

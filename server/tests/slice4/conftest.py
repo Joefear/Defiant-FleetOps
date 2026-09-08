@@ -24,7 +24,6 @@ from fleetops.db.metadata import (
     sessions,
     users,
 )
-from fleetops.settings import Settings
 
 
 @pytest.fixture(scope="session")
@@ -171,7 +170,7 @@ def space_data(migrator_connection, app_connection, space_password_hash):
 @pytest.fixture
 def space_client(database, space_data):
     """Exercise the real shared bearer dependency and runtime-role connection pool."""
-    app = create_app(Settings(database.url("fleetops_app"), space_data[0].org_id))
+    app = create_app(database.settings(space_data[0].org_id))
     with TestClient(app) as client:
         yield client
 

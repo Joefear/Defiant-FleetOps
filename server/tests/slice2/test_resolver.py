@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
 from fleetops.auth import token_digest
-from fleetops.db.metadata import actors, sessions, users
+from fleetops.db.metadata import actors, parties, sessions, users
 
 
 def resolve(connection, digest):
@@ -42,8 +42,14 @@ def test_valid_digest_returns_only_trusted_tuple_without_mutation(
     }
     assert before == after
     # Resolution did not manufacture tenant context for ordinary direct table access.
-    assert app_connection.execute(select(users)).all() == []
-    assert app_connection.execute(select(sessions)).all() == []
+    assert app_connection.execute(select(parties)).all() == []
+    app_connection.rollback()
+    # ADR-006 removes credential table visibility altogether, a stronger boundary.
+    for table in (users, sessions):
+        with pytest.raises(DBAPIError) as error:
+            app_connection.execute(select(table))
+        assert error.value.orig.sqlstate == "42501"
+        app_connection.rollback()
 
 
 @pytest.mark.parametrize(

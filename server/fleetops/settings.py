@@ -11,6 +11,7 @@ from sqlalchemy.engine import URL, make_url
 class Settings:
     database_url: URL = field(repr=False)
     organization_id: UUID
+    authenticator_url: URL = field(repr=False)
     session_seconds: int = 43200
 
     def __post_init__(self) -> None:
@@ -19,6 +20,11 @@ class Settings:
             or self.database_url.username != "fleetops_app"
         ):
             raise ValueError("Runtime requires postgresql+psycopg and fleetops_app credentials")
+        if (
+            self.authenticator_url.drivername != "postgresql+psycopg"
+            or self.authenticator_url.username != "fleetops_authenticator"
+        ):
+            raise ValueError("Login requires separate fleetops_authenticator credentials")
         if not 1 <= self.session_seconds <= 86400:
             raise ValueError("Session lifetime must be between 1 second and 24 hours")
 
@@ -28,5 +34,6 @@ class Settings:
         return cls(
             database_url=make_url(os.environ["FLEETOPS_APP_URL"]),
             organization_id=UUID(os.environ["FLEETOPS_ORG_ID"]),
+            authenticator_url=make_url(os.environ["FLEETOPS_AUTHENTICATOR_URL"]),
             session_seconds=int(os.environ.get("FLEETOPS_SESSION_SECONDS", "43200")),
         )

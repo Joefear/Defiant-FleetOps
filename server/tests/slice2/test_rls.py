@@ -2,13 +2,12 @@
 
 import pytest
 from conftest import TABLES, row_snapshot
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
 from fleetops.db.session import create_runtime_engine
-from fleetops.db.tenancy import set_organization
-from fleetops.settings import Settings
 
 
 def assert_rls_error(error):
@@ -17,11 +16,11 @@ def assert_rls_error(error):
 
 
 @pytest.mark.parametrize("name", sorted(TABLES))
-def test_cross_org_select_returns_zero_rows(name, tenants, app_connection):
+def test_cross_org_select_returns_zero_rows(name, tenants, permitted_dml, app_connection):
     a, b = tenants
     table = TABLES[name]
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         assert app_connection.exec_driver_sql("SELECT current_user").scalar_one() == "fleetops_app"
         assert app_connection.execute(
             select(table.c.id).where(table.c.id == a.ids[name])
@@ -30,7 +29,7 @@ def test_cross_org_select_returns_zero_rows(name, tenants, app_connection):
 
 
 @pytest.mark.parametrize("name", sorted(TABLES))
-def test_no_context_direct_select_returns_zero_rows(name, tenants, app_connection):
+def test_no_context_direct_select_returns_zero_rows(name, tenants, permitted_dml, app_connection):
     assert app_connection.execute(select(TABLES[name])).all() == []
 
 
@@ -56,7 +55,7 @@ def test_insert_requires_matching_context(
         values["id"] = uuid7()
     if not missing_context:
         app_connection.begin()
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
     with pytest.raises(DBAPIError) as error:
         app_connection.execute(table.insert().values(**values))
     assert_rls_error(error)
@@ -87,7 +86,7 @@ def test_hidden_update_delete_affect_zero_and_preserve_row(
     }
     with app_connection.begin():
         if not missing_context:
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
         assert (
             app_connection.execute(
                 table.update().where(table.c.id == target.ids[name]).values(**changes[name])
@@ -114,7 +113,7 @@ def test_visible_row_cannot_move_to_another_tenant(
     original = row_snapshot(migrator_connection, table, a.ids[name])
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             values = {"id": b.org_id} if name == "organizations" else {"org_id": b.org_id}
             app_connection.execute(table.update().where(table.c.id == a.ids[name]).values(**values))
     assert_rls_error(error)
@@ -126,14 +125,14 @@ def test_same_pooled_connection_has_no_tenant_after_transaction(database, tenant
     a, b = tenants
     table = TABLES["parties"]
     engine = create_runtime_engine(
-        Settings(database.url("fleetops_app"), a.org_id),
+        database.settings(a.org_id),
         pool_size=1,
         max_overflow=0,
     )
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
-            set_organization(connection, a.org_id)
+            set_authenticated(connection, a)
             pid = connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
             assert connection.execute(select(table.c.org_id)).scalars().all() == [a.org_id]
             transaction.rollback() if rollback else transaction.commit()
@@ -142,7 +141,7 @@ def test_same_pooled_connection_has_no_tenant_after_transaction(database, tenant
             assert connection.execute(select(table)).all() == []
         with engine.begin() as connection:
             assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == pid
-            set_organization(connection, b.org_id)
+            set_authenticated(connection, b)
             assert connection.execute(select(table.c.org_id)).scalars().all() == [b.org_id]
         with engine.begin() as connection:
             assert connection.execute(select(table)).all() == []

@@ -1,14 +1,13 @@
 """RLS proofs execute ordinary statements as fleetops_app with populated A/B targets."""
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
 from fleetops.db.metadata import facilities, locations
 from fleetops.db.session import create_runtime_engine
-from fleetops.db.tenancy import set_organization
-from fleetops.settings import Settings
 
 TABLES = [facilities, locations]
 
@@ -38,7 +37,7 @@ def test_space_rls_select_and_hidden_writes(
     before = space_snapshot(table, row_id)
     with app_connection.begin():
         if not missing:
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
         assert app_connection.exec_driver_sql("SELECT current_user, session_user").one() == (
             "fleetops_app",
             "fleetops_app",
@@ -83,7 +82,7 @@ def test_space_rls_insert_requires_current_organization(
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
             if not missing:
-                set_organization(app_connection, a.org_id)
+                set_authenticated(app_connection, a)
             app_connection.execute(table.insert().values(**values))
     assert_rls(error)
 
@@ -101,7 +100,7 @@ def test_space_rls_visible_row_cannot_move_to_other_organization(
     before = space_snapshot(table, row_id)
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 table.update().where(table.c.id == row_id).values(org_id=b.org_id)
             )
@@ -113,14 +112,14 @@ def test_space_rls_visible_row_cannot_move_to_other_organization(
 def test_space_tenant_context_does_not_survive_pool_reuse(database, space_data, rollback):
     a, b = space_data
     engine = create_runtime_engine(
-        Settings(database.url("fleetops_app"), a.org_id),
+        database.settings(a.org_id),
         pool_size=1,
         max_overflow=0,
     )
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
-            set_organization(connection, a.org_id)
+            set_authenticated(connection, a)
             pid = connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
             for table in TABLES:
                 assert connection.execute(
@@ -135,7 +134,7 @@ def test_space_tenant_context_does_not_survive_pool_reuse(database, space_data, 
             for table in TABLES:
                 assert connection.execute(select(table)).all() == []
         with engine.begin() as connection:
-            set_organization(connection, b.org_id)
+            set_authenticated(connection, b)
             for table in TABLES:
                 assert connection.execute(
                     select(table.c.id).order_by(table.c.id)

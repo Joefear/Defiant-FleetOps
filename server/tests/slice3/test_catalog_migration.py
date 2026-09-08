@@ -54,8 +54,16 @@ def slice2_snapshot(connection):
 
 
 def test_catalog_migration_round_trip_preserves_slice2(database, catalog_data, migrator_connection):
-    before = slice2_snapshot(migrator_connection)
+    head_before = slice2_snapshot(migrator_connection)
     try:
+        # ADR-006 intentionally changes authentication ACLs at 0006. Compare the
+        # unchanged Slice 2 contract across 0002/0003 from historical 0005, then
+        # separately prove that returning to head restores the corrected authority.
+        result = database.migrate("downgrade", "0005_space_cycle_guard")
+        assert result.returncode == 0, result.stderr
+        before = slice2_snapshot(migrator_connection)
+        for table in PRIOR_TABLES:
+            assert before[table.name]["rows"] == head_before[table.name]["rows"]
         result = database.migrate("downgrade", "0002_identity_auth")
         assert result.returncode == 0, result.stderr
         assert set(
@@ -76,6 +84,7 @@ def test_catalog_migration_round_trip_preserves_slice2(database, catalog_data, m
         # Compare runtime metadata only after restoring the current head.
         result = database.migrate("upgrade", "head")
         assert result.returncode == 0, result.stderr
+        assert slice2_snapshot(migrator_connection) == head_before
         result = database.migrate("check")
         assert result.returncode == 0, result.stderr
         for table in (items, external_references):

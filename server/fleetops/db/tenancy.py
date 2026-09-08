@@ -9,8 +9,8 @@ RUNTIME_GRANTS = {
     "actors": ("SELECT", "INSERT"),
     "parties": ("SELECT", "INSERT"),
     "party_roles": ("SELECT", "INSERT"),
-    "users": ("SELECT", "INSERT"),
-    "sessions": ("SELECT", "INSERT"),
+    "users": (),
+    "sessions": (),
 }
 
 
@@ -22,7 +22,7 @@ def apply_tenant_policy(
     RLS does not protect TRUNCATE. Restrict this helper to ordinary DML and remove all
     pre-existing app/PUBLIC grants before granting exactly what this slice needs.
     A restrictive boundary also prevents a later permissive policy from OR-ing tenancy
-    away. Owners remain privileged for migrations and ADR-002's sole credential resolver.
+    away. Owners remain privileged for migrations and the ADR-approved function boundaries.
     """
     if not set(privileges) <= {"SELECT", "INSERT", "UPDATE", "DELETE"}:
         raise ValueError("Only ordinary DML privileges are permitted")
@@ -83,4 +83,20 @@ def set_organization(connection: Connection, organization_id: UUID) -> None:
     connection.execute(
         text("SELECT pg_catalog.set_config('fleetops.org_id', :org_id, true)"),
         {"org_id": str(organization_id)},
+    )
+
+
+def set_credential_context(connection: Connection, digest: bytes) -> None:
+    """Carry a credential, never an Actor assertion, for database re-resolution (ADR-006).
+
+    Parameter binding keeps the digest out of SQL statement text; runtime engines hide
+    parameters. SET LOCAL ends with the request transaction, including pool rollback.
+    """
+    if not isinstance(digest, bytes) or len(digest) != 32:
+        raise ValueError("Credential context requires one SHA-256 digest")
+    if not connection.in_transaction():
+        raise RuntimeError("Credential context requires an active transaction")
+    connection.execute(
+        text("SELECT pg_catalog.set_config('fleetops.session_digest_hex', :digest, true)"),
+        {"digest": digest.hex()},
     )

@@ -1,11 +1,11 @@
 """Adversarial persisted ancestry must terminate and never masquerade as a complete path."""
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from uuid6 import uuid7
 
 from fleetops.db.metadata import locations
-from fleetops.db.tenancy import set_organization
 from fleetops.domain.space import SpaceHierarchyInvalid, SpaceNotFound, location_path
 
 
@@ -42,7 +42,7 @@ def test_space_path_detects_persisted_cycle(
         )
         migrator_connection.commit()
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         app_connection.exec_driver_sql("SET LOCAL statement_timeout = '2s'")
         with pytest.raises(SpaceHierarchyInvalid):
             location_path(app_connection, first)
@@ -78,7 +78,7 @@ def test_space_path_rejects_incomplete_ancestry(
     migrator_connection.commit()
     try:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             with pytest.raises(SpaceHierarchyInvalid):
                 location_path(app_connection, a.location_id)
         response = space_client.get(
@@ -113,7 +113,7 @@ def test_space_path_has_no_arbitrary_depth_truncation(
         expected.append(parent)
     migrator_connection.commit()
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         assert [row["id"] for row in location_path(app_connection, parent)] == expected
         assert (
             app_connection.execute(

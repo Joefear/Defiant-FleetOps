@@ -5,6 +5,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from uuid6 import uuid7
 
@@ -100,12 +101,10 @@ def test_space_invalid_timezone_writes_nothing(
 def test_space_domain_also_validates_timezone_before_insert(
     space_data, app_connection, migrator_connection
 ):
-    from fleetops.db.tenancy import set_organization
-
     a, _ = space_data
     before = space_rows(migrator_connection)
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         with pytest.raises(SpaceInvalid, match="Unknown IANA"):
             create_facility(
                 app_connection,

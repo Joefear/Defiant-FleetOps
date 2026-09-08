@@ -12,6 +12,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from psycopg import sql
+from server.tests.migration_snapshot import schema_snapshot
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
@@ -38,9 +39,15 @@ class Database:
     name: str
     migrator_password: str = field(repr=False)
     app_password: str = field(repr=False)
+    authenticator_password: str = field(repr=False)
+    historical_0005: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
-        passwords = {"fleetops_migrator": self.migrator_password, "fleetops_app": self.app_password}
+        passwords = {
+            "fleetops_migrator": self.migrator_password,
+            "fleetops_app": self.app_password,
+            "fleetops_authenticator": self.authenticator_password,
+        }
         return URL.create(
             "postgresql+psycopg",
             username=role,
@@ -48,6 +55,14 @@ class Database:
             host="127.0.0.1",
             port=self.port,
             database=self.name,
+        )
+
+    def settings(self, organization_id):
+        """Configure both independently authenticated runtime domains for the real API."""
+        from fleetops.settings import Settings
+
+        return Settings(
+            self.url("fleetops_app"), organization_id, self.url("fleetops_authenticator")
         )
 
     def migrate(
@@ -81,6 +96,16 @@ def user_relations(connection):
 
 @pytest.fixture(scope="session")
 def database():
+    yield from disposable_database()
+
+
+@pytest.fixture
+def fresh_database():
+    """A second clean cluster when a proof must predate every historical migration."""
+    yield from disposable_database()
+
+
+def disposable_database():
     """No external DB fallback, no SQLite, no skips; clean up only this session's container.
 
     The container binds a random localhost-only port so it never collides with (or gets
@@ -140,6 +165,7 @@ def database():
             f"fleetops_test_{uuid4().hex}",
             secrets.token_urlsafe(32),
             secrets.token_urlsafe(32),
+            secrets.token_urlsafe(32),
         )
         with admin:
             assert admin.info.server_version // 10000 == 16, "STOP: PostgreSQL 16 required"
@@ -149,8 +175,20 @@ def database():
         admin_options["dbname"] = db.name
         with psycopg.connect(**admin_options) as bootstrap:
             bootstrap_database(
-                bootstrap, migrator_password=db.migrator_password, app_password=db.app_password
+                bootstrap,
+                migrator_password=db.migrator_password,
+                app_password=db.app_password,
+                authenticator_password=db.authenticator_password,
             )
+        # Capture a genuinely fresh historical boundary before 0006 has ever run.
+        # Alembic does not own the separately bootstrapped authenticator role.
+        assert_migration_succeeded(db.migrate("upgrade", "0005_space_cycle_guard"))
+        snapshot_engine = create_engine(db.url("fleetops_migrator"), poolclass=NullPool)
+        try:
+            with snapshot_engine.connect() as connection:
+                db.historical_0005.update(schema_snapshot(connection))
+        finally:
+            snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
         yield db
         # Every test-only table, sequence, view and function must have been destroyed.
@@ -162,6 +200,9 @@ def database():
                     for name in (
                         "actors",
                         "alembic_version",
+                        "asset_identifiers",
+                        "asset_transitions",
+                        "assets",
                         "external_references",
                         "facilities",
                         "items",
@@ -178,7 +219,17 @@ def database():
                     "JOIN pg_namespace n ON n.oid = p.pronamespace "
                     "WHERE n.nspname NOT IN ('information_schema') "
                     "AND left(n.nspname, 3) <> 'pg_' ORDER BY p.proname"
-                ).all() == [("enforce_location_acyclic",), ("resolve_session",)]
+                ).all() == [
+                    ("current_authenticated_actor",),
+                    ("enforce_asset_initial_state",),
+                    ("enforce_authenticated_creator",),
+                    ("enforce_authenticated_updater",),
+                    ("enforce_location_acyclic",),
+                    ("issue_session",),
+                    ("resolve_session",),
+                    ("revoke_current_session",),
+                    ("transition_asset",),
+                ]
         finally:
             engine.dispose()
     finally:
@@ -237,6 +288,19 @@ def throwaway_table(migrator_connection, app_connection):
         migrator_connection.rollback()
         migrator_connection.exec_driver_sql(f"DROP TABLE {qualified}")
         migrator_connection.commit()
+
+
+@pytest.fixture
+def authenticator_connection(database):
+    """Actual independent login-only role, never SET ROLE from an app connection."""
+    engine = create_engine(
+        database.url("fleetops_authenticator"), poolclass=NullPool, hide_parameters=True
+    )
+    try:
+        with engine.connect() as connection:
+            yield connection
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture

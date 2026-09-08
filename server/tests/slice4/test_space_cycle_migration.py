@@ -1,16 +1,29 @@
 """Corrective migration preserves committed tables and removes its objects on downgrade."""
 
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from uuid6 import uuid7
 
 from fleetops.db.metadata import locations, metadata
-from fleetops.db.tenancy import set_organization
 
 
 def committed_snapshot(connection):
     """Compare data, constraints, policies, ownership, column ACLs, and the resolver definition."""
     result = {}
-    for table in metadata.sorted_tables:
+    # This proof runs at historical 0004/0005, before Asset tables exist.
+    historical = {
+        "organizations",
+        "actors",
+        "parties",
+        "party_roles",
+        "users",
+        "sessions",
+        "items",
+        "external_references",
+        "facilities",
+        "locations",
+    }
+    for table in (table for table in metadata.sorted_tables if table.name in historical):
         qualified = f"fleetops.{table.name}"
         result[table.name] = {
             "rows": connection.execute(select(table).order_by(table.c.id)).all(),
@@ -95,7 +108,7 @@ def test_cycle_guard_migration_round_trip_preserves_committed_slice4(
                 first, second = uuid7(), uuid7()
                 transaction = app_connection.begin()
                 try:
-                    set_organization(app_connection, a.org_id)
+                    set_authenticated(app_connection, a)
                     rows = [
                         space_values(
                             a, locations, id=first, code="OLD-1", parent_location_id=second
@@ -112,6 +125,8 @@ def test_cycle_guard_migration_round_trip_preserves_committed_slice4(
                 finally:
                     transaction.rollback()
                 assert committed_snapshot(migrator_connection) == before
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stdout + result.stderr
         result = database.migrate("check")
         assert result.returncode == 0, result.stdout + result.stderr
     finally:

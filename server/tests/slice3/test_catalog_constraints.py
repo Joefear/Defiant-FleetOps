@@ -1,12 +1,12 @@
 """Database-enforced catalog facts, independent of API validation."""
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
 from fleetops.db.metadata import external_references, items, party_roles
-from fleetops.db.tenancy import set_organization
 from fleetops.domain.uom import UnitOfMeasure
 
 
@@ -15,11 +15,11 @@ def test_catalog_duplicate_insert_is_rejected(revision, catalog_data, item_value
     a, _ = catalog_data
     values = item_values(a, revision=revision)
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         app_connection.execute(items.insert().values(**values))
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(items.insert().values(**{**values, "id": uuid7()}))
     assert error.value.orig.sqlstate == "23505"
     assert error.value.orig.diag.constraint_name == "uq_items_catalog_entry"
@@ -31,11 +31,11 @@ def test_catalog_duplicate_update_is_rejected(revision, catalog_data, item_value
     first = item_values(a, revision=revision)
     second = item_values(a, manufacturer_part_number="OTHER", revision=revision)
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         app_connection.execute(items.insert(), [first, second])
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 items.update()
                 .where(items.c.id == second["id"])
@@ -59,7 +59,7 @@ def test_catalog_different_revisions_and_manufacturers_are_distinct(
         item_values(a, manufacturer_party_id=a.other_manufacturer_id, revision="A"),
     ]
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         app_connection.execute(items.insert(), variants)
         assert set(
             app_connection.execute(
@@ -82,7 +82,7 @@ def test_catalog_manufacturer_must_be_same_tenant_member(
     # The row itself belongs to A and passes RLS; 23503 proves the relationship boundary.
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             statement = (
                 items.insert().values(**item_values(a, manufacturer_party_id=manufacturer))
                 if operation == "insert"
@@ -130,7 +130,7 @@ def test_catalog_manufacturer_discriminator_cannot_be_supplied(
     a, _ = catalog_data
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 items.insert().values(
                     **item_values(a, manufacturer_party_id=a.vendor_id),
@@ -156,7 +156,7 @@ def test_catalog_uom_check_matches_all_approved_units(catalog_data, item_values,
         "L",
     }
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         for unit in UnitOfMeasure:
             app_connection.execute(
                 items.insert().values(
@@ -182,7 +182,7 @@ def test_catalog_invalid_uom_is_rejected_by_database(
     a, _ = catalog_data
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             statement = (
                 items.insert().values(**item_values(a, uom=unit))
                 if operation == "insert"
@@ -205,7 +205,7 @@ def test_catalog_classification_is_capture_only(
 ):
     a, _ = catalog_data
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         row = (
             app_connection.execute(
                 items.insert()
@@ -227,7 +227,7 @@ def test_catalog_duplicate_reference_attachment_is_rejected(catalog_data, app_co
     a, _ = catalog_data
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 external_references.insert().values(
                     id=uuid7(),
@@ -249,7 +249,7 @@ def test_catalog_reference_type_check_rejects_unopened_targets(kind, catalog_dat
     a, _ = catalog_data
     with pytest.raises(DBAPIError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(
                 external_references.insert().values(
                     id=uuid7(),
@@ -276,11 +276,15 @@ def test_catalog_attribution_foreign_keys_cannot_cross_tenants(
     catalog_data,
     item_values,
     app_connection,
+    migrator_connection,
 ):
     a, b = catalog_data
+    # The runtime updater now overwrites spoofed attribution. Owner SQL proves the
+    # underlying FK separately; runtime overwrite is proved in ADR-006 tests.
+    connection = migrator_connection if operation == "updater-update" else app_connection
     with pytest.raises(DBAPIError) as error:
-        with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+        with connection.begin():
+            set_authenticated(connection, a)
             if operation == "updater-update":
                 statement = (
                     items.update()
@@ -300,5 +304,5 @@ def test_catalog_attribution_foreign_keys_cannot_cross_tenants(
                     external_value="value",
                     created_by_actor_id=b.actor_id,
                 )
-            app_connection.execute(statement)
+            connection.execute(statement)
     assert error.value.orig.sqlstate == "23503"

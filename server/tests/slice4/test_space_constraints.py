@@ -1,11 +1,11 @@
 """Direct PostgreSQL proofs for tenant/facility relationships and location vocabulary."""
 
 import pytest
+from server.tests.auth_context import set_authenticated
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from fleetops.db.metadata import facilities, locations
-from fleetops.db.tenancy import set_organization
 from fleetops.domain.location_kinds import LocationKind
 
 
@@ -13,7 +13,7 @@ from fleetops.domain.location_kinds import LocationKind
 def test_space_database_accepts_all_eight_kinds(kind, space_data, space_values, app_connection):
     a, _ = space_data
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         row = (
             app_connection.execute(
                 locations.insert()
@@ -63,7 +63,7 @@ def test_space_database_rejects_invalid_location(
     values.update(changes[case])
     with pytest.raises(IntegrityError) as error:
         with app_connection.begin():
-            set_organization(app_connection, a.org_id)
+            set_authenticated(app_connection, a)
             app_connection.execute(locations.insert().values(**values))
     assert error.value.orig.sqlstate == state
     assert error.value.orig.diag.constraint_name == constraint
@@ -78,7 +78,7 @@ def test_space_database_allows_facility_local_codes_and_preserves_case(
 ):
     a, _ = space_data
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         for facility_id, code in (
             (a.facility_id, "RACK-01"),
             (a.other_facility_id, "RACK-01"),
@@ -99,7 +99,7 @@ def test_space_database_allows_facility_local_codes_and_preserves_case(
 def test_space_database_allows_child_in_same_facility(space_data, space_values, app_connection):
     a, _ = space_data
     with app_connection.begin():
-        set_organization(app_connection, a.org_id)
+        set_authenticated(app_connection, a)
         assert (
             app_connection.execute(
                 locations.insert()
