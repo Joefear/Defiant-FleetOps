@@ -13,6 +13,7 @@ from fleetops.api.app import create_app
 from fleetops.auth import hash_password, token_digest
 from fleetops.db.metadata import (
     actors,
+    assets,
     external_references,
     facilities,
     items,
@@ -160,6 +161,13 @@ def space_data(migrator_connection, app_connection, space_password_hash):
     finally:
         app_connection.rollback()
         migrator_connection.rollback()
+        # Slice 7 activates an Asset-to-event back-reference. Privileged fixture
+        # disposal releases it before deleting histories; runtime cannot do this.
+        migrator_connection.execute(
+            assets.update()
+            .where(assets.c.org_id.in_([tenant.org_id for tenant in tenants]))
+            .values(current_assignment_id=None)
+        )
         for table in reversed(metadata.sorted_tables):
             migrator_connection.execute(
                 table.delete().where(table.c.org_id.in_([tenant.org_id for tenant in tenants]))

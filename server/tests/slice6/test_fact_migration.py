@@ -76,17 +76,29 @@ def test_populated_0006_round_trip_never_backfills_or_lazily_invents_baseline(
     connection = migrator_connection
     try:
         migrate(database, "downgrade", "0006_assets")
-        a = for_asset(space_data[0], seed_asset(space_data[0], initial_facts=False)["id"])
+        a = for_asset(
+            space_data[0],
+            seed_asset(space_data[0], initial_facts=False, initial_assignment=False)["id"],
+        )
         before, roles = schema_snapshot(connection), role_snapshot(connection)
         migrate(database, "upgrade", "head")
         upgraded = schema_snapshot(connection)
         for name, definition in before.items():
-            if name not in {"alembic_version", "functions", "triggers"}:
+            if name not in {"alembic_version", "functions", "triggers", "assets"}:
                 assert upgraded[name] == definition
+        # Slice 7 replaces precisely the deferred NULL-only assignment constraint
+        # with the activated same-tenant/same-Asset event FK. Every other detail stays exact.
+        assert (
+            upgraded["assets"] | {"constraints": before["assets"]["constraints"]}
+            == before["assets"]
+        )
+        assert [c for c in upgraded["assets"]["constraints"] if c[0] != "fk_assets_assignment"] == [
+            c for c in before["assets"]["constraints"] if c[0] != "ck_assets_assignment_unavailable"
+        ]
         assert set(before["functions"]) <= set(upgraded["functions"])
         assert set(before["triggers"]) <= set(upgraded["triggers"])
-        assert len(upgraded["functions"]) == len(before["functions"]) + 3
-        assert len(upgraded["triggers"]) == len(before["triggers"]) + 4
+        assert len(upgraded["functions"]) == len(before["functions"]) + 5
+        assert len(upgraded["triggers"]) == len(before["triggers"]) + 7
         assert role_snapshot(connection) == roles
         assert guard_objects(connection) == (1, 1, 1)
         connection.rollback()
@@ -95,7 +107,10 @@ def test_populated_0006_round_trip_never_backfills_or_lazily_invents_baseline(
             set_authenticated(app_connection, a)
             row = reconcile_assets(app_connection)[0]
             assert row["asset_id"] == a.asset_id
-            assert row["discrepancies"] == ["missing_initial_facts"]
+            assert row["discrepancies"] == [
+                "missing_initial_facts",
+                "missing_initial_assignment_facts",
+            ]
         for kind in KINDS:
             with pytest.raises(DBAPIError) as error:
                 runtime_fact(app_connection, a, kind)

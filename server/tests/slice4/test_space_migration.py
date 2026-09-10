@@ -141,6 +141,9 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "asset_movements",
         "asset_custody_changes",
         "asset_ownership_changes",
+        "asset_assignment_events",
+        "asset_initial_assignment_facts",
+        "asset_configurations",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -148,6 +151,7 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
     ).all() == [
         (name,)
         for name in (
+            "assign_asset",
             "change_custody",
             "change_ownership",
             "current_authenticated_actor",
@@ -160,6 +164,7 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "resolve_session",
             "revoke_current_session",
             "transition_asset",
+            "unassign_asset",
         )
     ]
     for table in (facilities, locations):

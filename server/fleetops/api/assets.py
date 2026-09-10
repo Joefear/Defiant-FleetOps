@@ -18,11 +18,19 @@ from fleetops.api.asset_schemas import (
     MovementRequest,
     OwnershipOut,
     OwnershipRequest,
+    PhysicalChangeRequest,
     TransitionOut,
     TransitionRequest,
 )
+from fleetops.api.assignment_schemas import (
+    AssignmentEventOut,
+    AssignmentHistoryOut,
+    AssignmentRequest,
+    ConfigurationOut,
+    ConfigurationRequest,
+)
 from fleetops.api.context import RequestContext
-from fleetops.domain import asset_facts, assets
+from fleetops.domain import asset_facts, assets, assignments, configurations
 from fleetops.domain.lifecycle import LifecycleInvalid
 
 
@@ -129,6 +137,55 @@ def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) 
         """Read immutable ownership history in produced-version order."""
         with asset_errors():
             return asset_facts.list_ownership_changes(context.connection, asset_id)
+
+    @router.post(
+        "/assets/{asset_id}/assignments", response_model=AssignmentEventOut, status_code=201
+    )
+    def assign(asset_id: UUID, body: AssignmentRequest, context: Context):
+        """Assign or reassign with one immutable event and one global produced version."""
+        with asset_errors():
+            return assignments.assign_asset(context.connection, asset_id, values=body.model_dump())
+
+    @router.post(
+        "/assets/{asset_id}/unassignment", response_model=AssignmentEventOut, status_code=201
+    )
+    def unassign(asset_id: UUID, body: PhysicalChangeRequest, context: Context):
+        """Unassign using the authoritative current event, never a caller-selected prior pair."""
+        with asset_errors():
+            return assignments.unassign_asset(
+                context.connection, asset_id, values=body.model_dump()
+            )
+
+    @router.get("/assets/{asset_id}/assignments", response_model=AssignmentHistoryOut)
+    def assignment_history(asset_id: UUID, context: Context):
+        """Return creation witness, immutable events, and derived historical intervals."""
+        with asset_errors():
+            return assignments.assignment_history(context.connection, asset_id)
+
+    @router.post(
+        "/assets/{asset_id}/configurations", response_model=ConfigurationOut, status_code=201
+    )
+    def configure(asset_id: UUID, body: ConfigurationRequest, context: Context):
+        """Append a configuration without consuming an Asset version."""
+        with asset_errors():
+            return configurations.append_configuration(
+                context.connection,
+                asset_id,
+                org_id=context.identity.organization_id,
+                values=body.model_dump(),
+            )
+
+    @router.get("/assets/{asset_id}/configurations", response_model=list[ConfigurationOut])
+    def configuration_history(asset_id: UUID, context: Context):
+        """Read configuration allocation order without exposing global sequence values."""
+        with asset_errors():
+            return configurations.list_configurations(context.connection, asset_id)
+
+    @router.get("/assets/{asset_id}/configurations/current", response_model=ConfigurationOut | None)
+    def current_configuration(asset_id: UUID, context: Context):
+        """Return the latest visible configuration, or NULL when none has been recorded."""
+        with asset_errors():
+            return configurations.current_configuration(context.connection, asset_id)
 
     @router.get("/health/assets/reconciliation", response_model=list[AssetDiscrepancy])
     def reconciliation(context: Context):

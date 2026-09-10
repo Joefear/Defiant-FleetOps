@@ -14,6 +14,7 @@ from fleetops.api.app import create_app
 from fleetops.auth import hash_password, token_digest
 from fleetops.db.metadata import (
     actors,
+    assets,
     metadata,
     organizations,
     parties,
@@ -105,6 +106,13 @@ def tenants(migrator_connection, app_connection):
     finally:
         app_connection.rollback()
         migrator_connection.rollback()
+        # Administrative fixture cleanup releases the event back-reference before deleting
+        # history. Runtime projection permissions and immutable events remain unchanged.
+        migrator_connection.execute(
+            assets.update()
+            .where(assets.c.org_id.in_([tenant.org_id for tenant in result]))
+            .values(current_assignment_id=None)
+        )
         for table in reversed(metadata.sorted_tables):
             migrator_connection.execute(
                 table.delete().where(table.c.org_id.in_([tenant.org_id for tenant in result]))

@@ -10,7 +10,13 @@ from sqlalchemy import select, text
 from uuid6 import uuid7
 
 from fleetops.api.app import create_app
-from fleetops.db.metadata import asset_identifiers, asset_initial_facts, asset_transitions, assets
+from fleetops.db.metadata import (
+    asset_identifiers,
+    asset_initial_assignment_facts,
+    asset_initial_facts,
+    asset_transitions,
+    assets,
+)
 from fleetops.db.tenancy import apply_tenant_policy
 
 space_data = space_fixtures.space_data
@@ -54,9 +60,9 @@ def call_transition(connection, tenant, **changes):
 
 @pytest.fixture
 def seed_asset(space_data, migrator_connection):
-    "Create version-1 history and ADR-007 facts atomically from explicit fixture inputs."
+    "Create version-1 history and ADR-007/008 witnesses from declared inputs in one transaction."
 
-    def seed(tenant, *, history=True, initial_facts=True, **changes):
+    def seed(tenant, *, history=True, initial_facts=True, initial_assignment=True, **changes):
         values = dict(
             id=uuid7(),
             org_id=tenant.org_id,
@@ -101,6 +107,16 @@ def seed_asset(space_data, migrator_connection):
                     initial_owner_party_id=values["owner_party_id"],
                     initial_custodian_party_id=values["custodian_party_id"],
                     initial_location_id=values["current_location_id"],
+                    actor_id=values["created_by_actor_id"],
+                    occurred_at=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            )
+        if initial_assignment:
+            # Positive creation testimony, never reconstructed from the returned projection.
+            migrator_connection.execute(
+                asset_initial_assignment_facts.insert().values(
+                    asset_id=values["id"],
+                    org_id=values["org_id"],
                     actor_id=values["created_by_actor_id"],
                     occurred_at=datetime(2026, 1, 1, tzinfo=UTC),
                 )

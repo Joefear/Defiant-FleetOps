@@ -187,3 +187,9 @@ class AssetDiscrepancy(StateDiscrepancy):
     global_missing_version_ranges: list[tuple[int, int]]
     global_duplicate_versions: list[int]
     global_ahead_versions: list[int]
+    initial_assignment_facts_present: bool
+    current_assignment_id: UUID | None
+    latest_assignment_event_id: UUID | None
+    latest_assignment_result_version: int | None
+    latest_assignee_type: str | None
+    latest_assignee_id: UUID | None

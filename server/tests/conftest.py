@@ -42,6 +42,7 @@ class Database:
     authenticator_password: str = field(repr=False)
     historical_0005: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0006: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0007: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -193,6 +194,9 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0006_assets"))
             with snapshot_engine.connect() as connection:
                 db.historical_0006.update(schema_snapshot(connection))
+            assert_migration_succeeded(db.migrate("upgrade", "0007_asset_fact_history"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0007.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -201,35 +205,42 @@ def disposable_database():
         engine = create_engine(db.url("fleetops_migrator"), poolclass=NullPool)
         try:
             with engine.connect() as connection:
-                assert user_relations(connection) == [
-                    ("fleetops", name, "r")
-                    for name in (
-                        "actors",
-                        "alembic_version",
-                        "asset_custody_changes",
-                        "asset_identifiers",
-                        "asset_initial_facts",
-                        "asset_movements",
-                        "asset_ownership_changes",
-                        "asset_transitions",
-                        "assets",
-                        "external_references",
-                        "facilities",
-                        "items",
-                        "locations",
-                        "organizations",
-                        "parties",
-                        "party_roles",
-                        "sessions",
-                        "users",
-                    )
-                ]
+                assert user_relations(connection) == sorted(
+                    [
+                        ("fleetops", name, "r")
+                        for name in (
+                            "actors",
+                            "alembic_version",
+                            "asset_assignment_events",
+                            "asset_configurations",
+                            "asset_custody_changes",
+                            "asset_identifiers",
+                            "asset_initial_facts",
+                            "asset_initial_assignment_facts",
+                            "asset_movements",
+                            "asset_ownership_changes",
+                            "asset_transitions",
+                            "assets",
+                            "external_references",
+                            "facilities",
+                            "items",
+                            "locations",
+                            "organizations",
+                            "parties",
+                            "party_roles",
+                            "sessions",
+                            "users",
+                        )
+                    ]
+                    + [("fleetops", "asset_configurations_configuration_seq_seq", "S")]
+                )
                 assert connection.exec_driver_sql(
                     "SELECT p.proname FROM pg_proc p "
                     "JOIN pg_namespace n ON n.oid = p.pronamespace "
                     "WHERE n.nspname NOT IN ('information_schema') "
                     "AND left(n.nspname, 3) <> 'pg_' ORDER BY p.proname"
                 ).all() == [
+                    ("assign_asset",),
                     ("change_custody",),
                     ("change_ownership",),
                     ("current_authenticated_actor",),
@@ -242,6 +253,7 @@ def disposable_database():
                     ("resolve_session",),
                     ("revoke_current_session",),
                     ("transition_asset",),
+                    ("unassign_asset",),
                 ]
         finally:
             engine.dispose()

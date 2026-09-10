@@ -110,6 +110,9 @@ WITH tenant_assets AS (
     UNION ALL
     SELECT h.org_id, h.asset_id, h.result_version FROM fleetops.asset_ownership_changes h
       JOIN tenant_assets a ON a.org_id = h.org_id AND a.id = h.asset_id
+    UNION ALL
+    SELECT h.org_id, h.asset_id, h.result_version FROM fleetops.asset_assignment_events h
+      JOIN tenant_assets a ON a.org_id = h.org_id AND a.id = h.asset_id
 ), version_counts AS (
     SELECT org_id, asset_id, result_version, count(*) AS producers
     FROM events GROUP BY org_id, asset_id, result_version
@@ -150,9 +153,20 @@ WITH tenant_assets AS (
            c.id AS custody_id, c.to_custodian_party_id AS latest_custodian_party_id,
            c.result_version AS latest_custody_result_version,
            o.id AS ownership_id, o.to_owner_party_id AS latest_owner_party_id,
-           o.result_version AS latest_ownership_result_version
+           o.result_version AS latest_ownership_result_version,
+           a.current_assignment_id,
+           w.asset_id IS NOT NULL AS initial_assignment_facts_present,
+           e.id AS latest_assignment_event_id,
+           e.result_version AS latest_assignment_result_version,
+           e.to_assignee_type AS latest_assignee_type,
+           e.to_assignee_id AS latest_assignee_id,
+           target.id IS NOT NULL AND target.asset_id = a.id AS assignment_target_valid
     FROM tenant_assets a
     LEFT JOIN fleetops.asset_initial_facts b ON b.org_id = a.org_id AND b.asset_id = a.id
+    LEFT JOIN fleetops.asset_initial_assignment_facts w
+      ON w.org_id = a.org_id AND w.asset_id = a.id
+    LEFT JOIN fleetops.asset_assignment_events target
+      ON target.org_id = a.org_id AND target.id = a.current_assignment_id
     LEFT JOIN LATERAL (
         SELECT id, to_state, result_version FROM fleetops.asset_transitions
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
@@ -169,6 +183,11 @@ WITH tenant_assets AS (
         SELECT id, to_owner_party_id, result_version FROM fleetops.asset_ownership_changes
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) o ON true
+    LEFT JOIN LATERAL (
+        SELECT id, to_assignee_type, to_assignee_id, result_version
+        FROM fleetops.asset_assignment_events
+        WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
+    ) e ON true
 ), checked AS (
     SELECT f.*,
         COALESCE(g.missing_ranges, '[]'::jsonb) AS global_missing_version_ranges,
@@ -204,6 +223,18 @@ WITH tenant_assets AS (
                  THEN 'custody_history_version_ahead' END,
             CASE WHEN latest_ownership_result_version > version
                  THEN 'ownership_history_version_ahead' END,
+            CASE WHEN NOT initial_assignment_facts_present
+                 THEN 'missing_initial_assignment_facts' END,
+            CASE WHEN latest_assignment_event_id IS NULL AND current_assignment_id IS NOT NULL
+                 THEN 'assignment_projection_without_history' END,
+            CASE WHEN latest_assignment_event_id IS NOT NULL AND current_assignment_id
+                 IS DISTINCT FROM CASE WHEN latest_assignee_id IS NOT NULL
+                                      THEN latest_assignment_event_id END
+                 THEN 'assignment_projection_mismatch' END,
+            CASE WHEN current_assignment_id IS NOT NULL AND NOT assignment_target_valid
+                 THEN 'assignment_target_invalid' END,
+            CASE WHEN latest_assignment_result_version > version
+                 THEN 'assignment_history_version_ahead' END,
             CASE WHEN g.missing_ranges IS NOT NULL THEN 'global_version_missing' END,
             CASE WHEN cardinality(v.duplicate_versions) > 0 THEN 'global_version_duplicate' END,
             CASE WHEN cardinality(v.ahead_versions) > 0 THEN 'global_history_version_ahead' END
@@ -219,8 +250,9 @@ SELECT * FROM checked WHERE cardinality(discrepancies) > 0 ORDER BY asset_id
 def reconcile_assets(connection: Connection):
     """Report initial, latest-class and global disagreements without repair.
 
-    ADR-007 baseline authority applies only until that class changes. Its continued
-    existence is checked separately from current values, including after later events.
+    ADR-007/008 creation authority applies only until the relevant class changes.
+    Both witnesses' continued existence is checked separately from current values,
+    including after later events. Neither witness nor configuration produces a version.
     Slice 5 state fields/categories retain their meaning; per-class version gaps are valid.
     """
     return connection.execute(RECONCILIATION_SQL).mappings().all()

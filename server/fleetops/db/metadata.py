@@ -7,12 +7,14 @@ typed attribution; a DEVICE actor has no need for a password-bearing user.
 """
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
     Computed,
     DateTime,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     LargeBinary,
@@ -512,8 +514,6 @@ assets = Table(
         name="ck_assets_state",
     ),
     CheckConstraint("version > 0", name="ck_assets_version"),
-    # There is no assignment authority or target table until Slice 7.
-    CheckConstraint("current_assignment_id IS NULL", name="ck_assets_assignment_unavailable"),
     CheckConstraint("length(btrim(asset_tag)) BETWEEN 1 AND 200", name="ck_assets_tag"),
     CheckConstraint("length(btrim(description)) BETWEEN 1 AND 4000", name="ck_assets_description"),
 )
@@ -790,4 +790,195 @@ asset_ownership_changes = _physical_history(
     "parties",
     "corrects_ownership_change_id",
     nullable=False,
+)
+
+# ADR-008: row existence positively attests initially unassigned, not an unknown assignee.
+asset_initial_assignment_facts = Table(
+    "asset_initial_assignment_facts",
+    metadata,
+    Column("asset_id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("actor_id", Uuid, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "recorded_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("statement_timestamp()"),
+    ),
+    UniqueConstraint("org_id", "asset_id", name="uq_asset_initial_assignment_facts_asset"),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_initial_assignment_facts_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_initial_assignment_facts_asset",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_asset_initial_assignment_facts_actor",
+    ),
+)
+Index(
+    "ix_asset_initial_assignment_facts_actor",
+    asset_initial_assignment_facts.c.org_id,
+    asset_initial_assignment_facts.c.actor_id,
+)
+
+asset_assignment_events = Table(
+    "asset_assignment_events",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("asset_id", Uuid, nullable=False),
+    Column("result_version", Integer, nullable=False),
+    Column("from_assignee_type", Text),
+    Column("from_assignee_id", Uuid),
+    Column("to_assignee_type", Text),
+    Column("to_assignee_id", Uuid),
+    Column("actor_id", Uuid, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "recorded_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("statement_timestamp()"),
+    ),
+    Column("reason", Text, nullable=False),
+    Column("corrects_assignment_event_id", Uuid),
+    Column("client_op_id", Uuid),
+    UniqueConstraint("org_id", "id", name="uq_asset_assignment_events_org_id_id"),
+    UniqueConstraint("org_id", "asset_id", "id", name="uq_asset_assignment_events_asset_id"),
+    UniqueConstraint(
+        "org_id", "asset_id", "result_version", name="uq_asset_assignment_events_version"
+    ),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_assignment_events_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_assignment_events_asset",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_asset_assignment_events_actor",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id", "corrects_assignment_event_id"],
+        [
+            "fleetops.asset_assignment_events.org_id",
+            "fleetops.asset_assignment_events.asset_id",
+            "fleetops.asset_assignment_events.id",
+        ],
+        name="fk_asset_assignment_events_corrects",
+    ),
+    CheckConstraint("result_version > 0", name="ck_asset_assignment_events_version"),
+    CheckConstraint(
+        "length(btrim(reason)) BETWEEN 1 AND 4000 AND reason ~ '[^[:space:]]'",
+        name="ck_asset_assignment_events_reason",
+    ),
+    CheckConstraint(
+        "from_assignee_id IS NOT NULL OR to_assignee_id IS NOT NULL",
+        name="ck_asset_assignment_events_change",
+    ),
+)
+for endpoint in ("from", "to"):
+    asset_assignment_events.append_constraint(
+        CheckConstraint(
+            f"({endpoint}_assignee_type IS NULL) = ({endpoint}_assignee_id IS NULL)",
+            name=f"ck_asset_assignment_events_{endpoint}_pair",
+        )
+    )
+    asset_assignment_events.append_constraint(
+        CheckConstraint(
+            f"{endpoint}_assignee_type IN ('ACTOR', 'LOCATION', 'PARTY')",
+            name=f"ck_asset_assignment_events_{endpoint}_type",
+        )
+    )
+Index(
+    "ix_asset_assignment_events_actor",
+    asset_assignment_events.c.org_id,
+    asset_assignment_events.c.actor_id,
+)
+
+# Identity allocates configuration order only. The API deliberately omits this global value.
+asset_configurations = Table(
+    "asset_configurations",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("asset_id", Uuid, nullable=False),
+    Column("image_name", Text, nullable=False),
+    Column("image_version", Text, nullable=False),
+    Column("config_profile", Text, nullable=False),
+    Column("notes", Text, nullable=False),
+    Column(
+        "applied_by",
+        Uuid,
+        nullable=False,
+        server_default=text("fleetops.current_authenticated_actor()"),
+    ),
+    Column("applied_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "recorded_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("statement_timestamp()"),
+    ),
+    Column("evidence_ref", Uuid),
+    Column("configuration_seq", BigInteger, Identity(always=True, cache=1), nullable=False),
+    UniqueConstraint("org_id", "id", name="uq_asset_configurations_org_id_id"),
+    UniqueConstraint("configuration_seq", name="uq_asset_configurations_seq"),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_configurations_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_configurations_asset",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "applied_by"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_asset_configurations_actor",
+    ),
+    CheckConstraint("evidence_ref IS NULL", name="ck_asset_configurations_evidence_unavailable"),
+    CheckConstraint("configuration_seq > 0", name="ck_asset_configurations_seq"),
+    CheckConstraint("length(notes) <= 4000", name="ck_asset_configurations_notes"),
+)
+for field in ("image_name", "image_version", "config_profile"):
+    asset_configurations.append_constraint(
+        CheckConstraint(
+            f"length(btrim({field})) BETWEEN 1 AND 200 AND {field} ~ '[^[:space:]]'",
+            name=f"ck_asset_configurations_{field}",
+        )
+    )
+Index(
+    "ix_asset_configurations_history",
+    asset_configurations.c.org_id,
+    asset_configurations.c.asset_id,
+    asset_configurations.c.configuration_seq,
+)
+Index(
+    "ix_asset_configurations_actor",
+    asset_configurations.c.org_id,
+    asset_configurations.c.applied_by,
+)
+
+# The back-reference is installed after event creation; it must name this Asset's event.
+assets.append_constraint(
+    ForeignKeyConstraint(
+        ["org_id", "id", "current_assignment_id"],
+        [
+            "fleetops.asset_assignment_events.org_id",
+            "fleetops.asset_assignment_events.asset_id",
+            "fleetops.asset_assignment_events.id",
+        ],
+        name="fk_assets_assignment",
+        use_alter=True,
+    )
 )

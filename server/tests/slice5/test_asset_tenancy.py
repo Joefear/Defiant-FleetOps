@@ -218,4 +218,6 @@ def test_transition_function_acl_and_safe_object_resolution(migrator_connection,
         "move_asset",
         "change_custody",
         "change_ownership",
+        "assign_asset",
+        "unassign_asset",
     }

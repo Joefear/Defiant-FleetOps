@@ -29,7 +29,7 @@ def test_alembic_upgrade_downgrade_round_trip(database, migrator_connection):
             migrator_connection.exec_driver_sql(
                 "SELECT version_num FROM fleetops.alembic_version"
             ).scalar_one()
-            == "0007_asset_fact_history"
+            == "0008_assignment_configuration"
         )
         migrator_connection.rollback()
         assert_migration_succeeded(database.migrate("check"))

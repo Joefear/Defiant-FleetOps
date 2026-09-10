@@ -397,7 +397,8 @@ cycle guard and prior schema/security.
 
 Assets use permanent server-generated UUIDv7 identity. The editable Asset tag is
 unique within the organization. Owner is required; custodian and location may be
-unknown. Assignment is constrained to NULL until Slice 7. All existing tenant-owned
+unknown. Revision 0006 constrains assignment to NULL; Slice 7 activates its event FK.
+All existing tenant-owned
 references use composite organization keys. A fixed TRUE discriminator and Item FK
 prevent an Asset from referencing a nonserialized Item, including later attempts
 to change an Item already backing an Asset to nonserialized.
@@ -412,6 +413,7 @@ creation service, onboarding command, identifier-write endpoint or deletion rout
 Only controlled tests create the initial Asset/transition pair: Asset version 1
 and RECEIVED, with result version 1 and NULL → RECEIVED. Slice 6 fixtures also
 declare the matching immutable initial physical facts in that same transaction.
+Slice 7 fixtures also declare the separate initially-unassigned witness there.
 Later transition from-state
 must be non-null. Asset and transition versions must be positive. An INSERT-only
 database trigger requires every ordinary Asset INSERT, including owner setup, to
@@ -557,9 +559,10 @@ correlation only, with no idempotency or correction workflow.
 categories, and adds missing baseline, initial/latest physical projection mismatch,
 per-class history ahead, missing global version, duplicate global version and
 combined history ahead. One PostgreSQL statement checks a consistent snapshot
-under tenant RLS and never repairs data. The combined sequence includes only
-transitions, movements, custody changes and ownership changes; the baseline is
-excluded. Every version from 1 through `assets.version` must occur exactly once
+under tenant RLS and never repairs data. The Slice 6 combined sequence includes
+transitions, movements, custody changes and ownership changes; Slice 7 extends it
+with assignment events. Both creation witnesses and configurations are excluded.
+Every version from 1 through `assets.version` must occur exactly once
 across those histories. Individual histories may have gaps.
 
 Missing versions are reported as inclusive `[start, end]` pairs in
@@ -582,5 +585,112 @@ version checks and lock retention after function return. Migration tests compare
 fresh and populated 0006 snapshots through downgrade/re-upgrade, prove no backfill,
 and check exact schema/security restoration and Alembic metadata agreement.
 
-Assignment, receiving, evidence, corrections and offline capture remain deferred.
-Slice 6 awaits independent review; no commit or push is part of this implementation.
+Receiving, evidence, corrections and offline capture remain deferred.
+
+## Slice 7 assignment and configuration records
+
+Migration head `0008_assignment_configuration` follows `0007_asset_fact_history`.
+It implements [ADR-008](docs/architecture/ADR-008.md) using three new tables and
+two narrow assignment functions. Migrations 0001–0007 remain unchanged.
+
+`asset_initial_assignment_facts` positively records that an Asset began unassigned.
+Its `asset_id` primary key permits one witness, with tenant, credential-attributed
+Actor, claimed `occurred_at`, and database `recorded_at`. It has no produced version.
+Controlled fixtures declare the witness alongside the Asset, version-1 lifecycle
+transition and initial physical facts in one transaction. Existing Assets receive
+no backfill; missing witnesses remain incomplete. Production creation remains
+Slice 9 receiving, with no Asset or witness creation endpoint here.
+
+`asset_assignment_events` records immutable prior/resulting assignee pairs, Actor,
+occurrence and recording times, reason, and produced global `result_version`.
+Each pair is wholly NULL or a type/UUID; supported types are ACTOR, LOCATION and
+PARTY. The atomic boundary validates both endpoints against the corresponding
+same-tenant table. An event from unassigned to assigned is ASSIGN, assigned to
+unassigned is UNASSIGN, and assigned to assigned is REASSIGN. Unassigned to
+unassigned is rejected. Reassignment appends exactly once and consumes one version.
+
+`assign_asset` automatically assigns or reassigns; `unassign_asset` ends the current
+assignment. Both resolve the existing credential-bound Actor, lock the same
+tenant-scoped Asset with `SELECT FOR UPDATE`, then check expected global version.
+Before the first event, admission requires the positive witness and NULL projection.
+Later admission uses the latest assignment event by result version, rejects history
+ahead of the Asset, and verifies the projection. Failure appends nothing and repairs
+nothing. Success appends N+1 and changes only assignment projection/global version;
+the lock remains held through transaction completion.
+
+While assigned, `current_assignment_id` references the latest establishing event.
+The composite FK includes tenant and Asset identity. After UNASSIGN it is NULL.
+No runtime projection UPDATE, event INSERT/UPDATE/DELETE/TRUNCATE, or witness write
+is granted. Both functions are migrator-owned SECURITY DEFINER with fixed
+`pg_catalog, pg_temp` search paths, explicit tenant checks, app-only runtime EXECUTE,
+and no Actor argument. All three new tables retain fail-closed tenant RLS.
+
+Assignment reads return the independent witness, events in `result_version ASC`,
+and derived assignee intervals. Each establishing event's occurrence claim supplies
+`started_at`; the next event's claim supplies `ended_at`, or NULL while open.
+Stored events are never closed by UPDATE. Disagreeing clocks can produce an end
+claim earlier than its start; the original claims remain intact. ON_HOLD preserves
+assignment and produces no assignment event.
+
+`asset_configurations` preserves image name/version, configuration profile, notes,
+credential-derived `applied_by`, claimed `applied_at`, database `recorded_at`, and a
+durably NULL-only evidence seam. Configuration appends change no Asset projection
+or version and require no expected version. They use ordinary RLS-protected INSERT,
+with column grants excluding attribution, recording time and ordering authority.
+Database defaults and the existing attribution trigger enforce these values even
+on raw runtime SQL. No additional elevated configuration function is installed.
+UPDATE, DELETE and TRUNCATE are denied.
+
+An internal globally allocated BIGINT `GENERATED ALWAYS AS IDENTITY` supplies
+`configuration_seq`, with uniqueness, positive values and CACHE 1. Runtime roles
+have no sequence privileges and cannot supply or reset this column. History uses
+ascending sequence; current configuration uses the greatest visible sequence.
+Allocation order can differ from commit order; rollback and per-Asset gaps are valid.
+Concurrent configuration appends may both succeed. Ordinary FK locks still apply,
+but no Asset optimistic-version protocol is added to configuration writes.
+
+The sequence is omitted from request and response models, avoiding API disclosure
+of global allocation gaps. Runtime SQL can read its own tenant's row sequences;
+those gaps can reflect other Assets, tenants or aborted transactions, not an exact
+other-tenant record count. The sequence itself and other tenants' rows are denied.
+No per-tenant sequence registry or second Asset-version system is introduced.
+
+All routes require bearer authentication and forbid extra request fields:
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /assets/{asset_id}/assignments | Accept expected_version, assignee_type, assignee_id, reason and aware occurred_at; return one ASSIGN/REASSIGN event. |
+| POST /assets/{asset_id}/unassignment | Accept expected_version, reason and aware occurred_at; return one UNASSIGN event. |
+| GET /assets/{asset_id}/assignments | Return witness (NULL when missing), ordered events and derived intervals. |
+| POST /assets/{asset_id}/configurations | Accept image_name, image_version, config_profile, optional notes and aware applied_at; return the immutable record. |
+| GET /assets/{asset_id}/configurations | Return configuration history in internal sequence order. |
+| GET /assets/{asset_id}/configurations/current | Return greatest visible sequence, or NULL if no configuration exists. |
+
+Missing and invisible Assets return the same 404; stale or inconsistent assignment
+history returns 409; invalid business inputs/targets return 422. No request may
+choose tenant, performing Actor, prior assignment, result version, recorded time,
+sequence, evidence, correction or client-operation authority. Correction pointers
+and SQL `client_op_id` remain nullable seams without correction or apply-once behavior.
+
+The existing reconciliation endpoint now checks all five version-producing classes.
+It independently reports missing assignment witnesses, invalid/pre-history
+projection targets, latest-event disagreement and ahead-of-Asset assignment history.
+Global missing, duplicate and ahead versions remain detectable; both witnesses and
+configurations are excluded. It never repairs discrepancies.
+
+Run the Slice 7 PostgreSQL and API proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice7
+```
+
+Tests cover reconstruction, strict inputs, attribution, permissions/RLS, corruption,
+an eight-version five-class history, observed same-class/cross-class lock contention,
+post-lock stale rejection, reversed configuration commit order and aborted gaps.
+Fresh and populated 0007 migration round trips compare schema, rows, functions,
+triggers, roles, policies, column ACLs and identity/sequence ownership; Alembic checks
+metadata agreement. Downgrade restores the 0007 NULL-only projection constraint
+before removing any Slice 7 objects, and fails atomically if assignments remain active.
+It does not synthesize unassignment to make a downgrade succeed.
+
+Slice 7 awaits independent review. No commit, push or Slice 8 work is included.

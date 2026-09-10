@@ -130,10 +130,11 @@ def test_serialized_item_invariant_survives_item_and_asset_updates(asset_data, m
         ({"owner_party_id": None}, "23502"),
         ({"version": 0}, "23514"),
         ({"current_state": "ORDERED"}, "23514"),
-        ({"current_assignment_id": uuid7()}, "23514"),
+        # Slice 7 replaces the deferred NULL check with an Asset/tenant-safe event FK.
+        ({"current_assignment_id": uuid7()}, "23503"),
     ],
 )
-def test_asset_required_owner_state_version_and_deferred_assignment(
+def test_asset_required_owner_state_version_and_assignment_reference(
     changes, code, asset_data, migrator_connection
 ):
     rejected(
