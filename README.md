@@ -1,14 +1,15 @@
 # Defiant FleetOps
 
-Slice 5 adds Assets, identifiers, immutable lifecycle history, controlled transitions
-and state reconciliation to the identity, catalog and space foundation. It honours
-D1, D3, D7, D8, D10, D11, D12, D18, ADR-001 through ADR-006, and Build Handoff v1.2.
+Slice 6 adds immutable initial physical facts, movement, custody and ownership
+history to Assets and controlled lifecycle transitions. All four history classes
+share one Asset version and row lock. It honours D1, D3, D7, D8, D10, D11, D12,
+D18, ADR-001 through ADR-007, and Build Handoff v1.3.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
 The [Markdown transcription](docs/architecture/FleetOps_Architecture_Boundary_v0.1.md)
 is subordinate to that DOCX. Implementation follows the
-[v1.2 build handoff](docs/architecture/FleetOps_v0.1_Build_Handoff_v1.2.docx).
+[v1.3 build handoff](docs/architecture/FleetOps_v0.1_Build_Handoff_v1.3.docx).
 Disagreement requires STOP and an architecture amendment request, not a code workaround.
 
 ## Run checks
@@ -77,7 +78,8 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head includes the Slice 2 through Slice 5 tables described below.
+bookkeeping table is empty. Head is `0007_asset_fact_history` and includes the
+Slice 2 through Slice 6 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -408,7 +410,9 @@ the string "UNREADABLE" for a missing serial. Multiple unreadable markers are va
 Production creation belongs to receiving in Slice 9. Slice 5 exposes no Asset
 creation service, onboarding command, identifier-write endpoint or deletion route.
 Only controlled tests create the initial Asset/transition pair: Asset version 1
-and RECEIVED, with result version 1 and NULL → RECEIVED. Later transition from-state
+and RECEIVED, with result version 1 and NULL → RECEIVED. Slice 6 fixtures also
+declare the matching immutable initial physical facts in that same transaction.
+Later transition from-state
 must be non-null. Asset and transition versions must be positive. An INSERT-only
 database trigger requires every ordinary Asset INSERT, including owner setup, to
 begin at version 1 / RECEIVED. It creates no history and does not restrict later
@@ -485,6 +489,98 @@ trips and Alembic metadata checks. Concurrency proofs use separate runtime login
 and PostgreSQL-observed blocking to prove exactly one same-version winner and
 post-lock version validation, including lock retention after function return.
 
-Slice 6 movement/custody/ownership, assignment, receiving, evidence, corrections
-and offline capture remain deferred. This implementation awaits independent review;
-no commit or push is performed by the implementation turn.
+## Slice 6 movement, custody and ownership history
+
+Revision `0007_asset_fact_history` adds `asset_initial_facts`, `asset_movements`,
+`asset_custody_changes`, `asset_ownership_changes`, and three atomic functions.
+Migrations 0001–0006 and the accepted architectural documents remain unchanged.
+Downgrade removes only the new objects, preserving the authentication boundaries,
+Asset/lifecycle structures and Location cycle guard.
+
+Under [ADR-007](docs/architecture/ADR-007.md), each Asset has one immutable creation
+baseline, identified by `asset_id` with a unique `(org_id, asset_id)` constraint.
+It records initial owner, nullable custodian and nullable location, performing
+Actor, claimed occurrence time and database recording time. It has no
+`result_version` and does not increment the Asset version. The initial lifecycle
+transition remains the sole producer of global version 1.
+
+The baseline is independent historical evidence. Before the first change of a
+physical fact, its locked Asset projection must agree with the corresponding
+baseline value, using NULL-safe comparison. Missing baseline or disagreement
+rejects without writes. Later changes derive the prior fact from the latest row
+of that class by `result_version`, checking projection agreement and rejecting
+history ahead of the Asset. Legitimate later facts need not match creation values.
+The baseline never changes with movement, custody, ownership, state or descriptive edits.
+
+There is no migration backfill and no lazy baseline creation from Asset projections.
+Controlled fixtures declare Asset, initial transition and baseline together;
+incomplete-history tests explicitly opt out. Existing pre-Slice-6 Assets without
+baselines remain incomplete and cannot admit a first physical change. Production
+creation remains Slice 9 receiving; no Asset or baseline creation endpoint is exposed.
+
+`move_asset`, `change_custody` and `change_ownership` reuse the Slice 5 protocol:
+resolve trusted org and credential-bound Actor, lock the tenant-scoped Asset with
+`SELECT FOR UPDATE`, compare expected version after locking, validate authoritative
+prior fact, append N+1, and update only the relevant projection and global version.
+The lock remains held until the caller's transaction completes. Custody never
+implies ownership, and no physical change alters lifecycle, assignment, another
+physical projection, or the Location hierarchy.
+
+Each function is migrator-owned, SECURITY DEFINER, and uses a fixed
+`pg_catalog, pg_temp` search path with qualified tables and explicit tenant checks.
+Only `fleetops_app` receives runtime EXECUTE; PUBLIC and the authenticator are denied.
+No Actor argument exists. All four new tables have composite tenant-safe references,
+RLS USING/WITH CHECK and SELECT-only app grants. Runtime INSERT, UPDATE, DELETE and
+TRUNCATE are denied, including baseline writes and direct Asset projection updates.
+
+All six routes below require bearer authentication. POST accepts only
+`expected_version`, the listed destination, nonblank `reason`, and timezone-aware
+`occurred_at`. The service assigns UUIDv7; PostgreSQL derives Actor and `recorded_at`.
+GET returns `result_version ASC`, independent of occurrence or recording timestamps.
+Both timestamps and attributed Actor are exposed on each history row.
+
+| Endpoints | Destination fact |
+| --- | --- |
+| POST /assets/{asset_id}/movements; GET /assets/{asset_id}/movements | `to_location_id`, required field; explicit NULL records unknown location. |
+| POST /assets/{asset_id}/custody-changes; GET /assets/{asset_id}/custody-changes | `to_custodian_party_id`, required field; explicit NULL records unknown custody. |
+| POST /assets/{asset_id}/ownership-changes; GET /assets/{asset_id}/ownership-changes | `to_owner_party_id`, required non-null Party. |
+
+Movement permits both known-to-unknown and unknown-to-known facts, preserving
+nullable location truth. Both ownership endpoints' history values remain non-null.
+Missing or invisible Assets return the same 404; stale versions, missing baseline
+and inconsistent history/projection return 409; invalid targets or claims return 422.
+Correction references and `client_op_id` are nullable history seams. Normal API
+writes leave them NULL and reject them as input. SQL client-operation IDs provide
+correlation only, with no idempotency or correction workflow.
+
+`GET /health/assets/reconciliation` retains Slice 5 state discrepancy fields and
+categories, and adds missing baseline, initial/latest physical projection mismatch,
+per-class history ahead, missing global version, duplicate global version and
+combined history ahead. One PostgreSQL statement checks a consistent snapshot
+under tenant RLS and never repairs data. The combined sequence includes only
+transitions, movements, custody changes and ownership changes; the baseline is
+excluded. Every version from 1 through `assets.version` must occur exactly once
+across those histories. Individual histories may have gaps.
+
+Missing versions are reported as inclusive `[start, end]` pairs in
+`global_missing_version_ranges`; duplicates and versions ahead of the Asset appear
+in `global_duplicate_versions` and `global_ahead_versions`. Gap computation uses
+observed event versions, so a corrupt very large Asset version does not require
+expanding every absent integer. No second version counter or register is introduced.
+
+Run the focused proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice6
+```
+
+The proofs reconstruct all three physical facts from baseline plus five changes,
+reject first/later corruption without repair, exercise runtime permissions and
+credential spoofing, and reconcile a real six-version mixed history. Independent
+PostgreSQL connections prove same-class and cross-class contention, post-lock
+version checks and lock retention after function return. Migration tests compare
+fresh and populated 0006 snapshots through downgrade/re-upgrade, prove no backfill,
+and check exact schema/security restoration and Alembic metadata agreement.
+
+Assignment, receiving, evidence, corrections and offline capture remain deferred.
+Slice 6 awaits independent review; no commit or push is part of this implementation.

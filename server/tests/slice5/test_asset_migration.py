@@ -92,6 +92,10 @@ def test_asset_schema_contains_only_authorized_objects_and_text_states(migrator_
         "assets",
         "asset_identifiers",
         "asset_transitions",
+        "asset_initial_facts",
+        "asset_movements",
+        "asset_custody_changes",
+        "asset_ownership_changes",
     }
     assert (
         connection.exec_driver_sql(

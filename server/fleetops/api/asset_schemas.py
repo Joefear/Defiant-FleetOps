@@ -102,3 +102,88 @@ class StateDiscrepancy(BaseModel):
     latest_state: AssetState | None
     latest_result_version: int | None
     discrepancies: list[str]
+
+
+class PhysicalChangeRequest(InputModel):
+    """Shared claims only; no baseline, performer, prior-fact or recorded-time authority."""
+
+    expected_version: Annotated[StrictInt, Field(gt=0, le=2147483647)]
+    reason: Description
+    occurred_at: AwareDatetime
+
+
+class MovementRequest(PhysicalChangeRequest):
+    """An explicit NULL records unknown location; omission is never an implicit move."""
+
+    to_location_id: UUID | None
+
+
+class CustodyRequest(PhysicalChangeRequest):
+    """Unknown/unrepresented custody is valid independently of the required owner."""
+
+    to_custodian_party_id: UUID | None
+
+
+class OwnershipRequest(PhysicalChangeRequest):
+    """Ownership always names a same-tenant Party; NULL is not a transfer."""
+
+    to_owner_party_id: UUID
+
+
+class PhysicalChangeOut(BaseModel):
+    """Immutable physical change with global produced version and separate time claims."""
+
+    id: UUID
+    org_id: UUID
+    asset_id: UUID
+    result_version: int
+    actor_id: UUID
+    occurred_at: datetime
+    recorded_at: datetime
+    reason: str
+    client_op_id: UUID | None
+
+
+class MovementOut(PhysicalChangeOut):
+    """Location history, including unknown facts and an inert correction reference."""
+
+    from_location_id: UUID | None
+    to_location_id: UUID | None
+    corrects_movement_id: UUID | None
+
+
+class CustodyOut(PhysicalChangeOut):
+    """Possession history never substitutes for ownership."""
+
+    from_custodian_party_id: UUID | None
+    to_custodian_party_id: UUID | None
+    corrects_custody_change_id: UUID | None
+
+
+class OwnershipOut(PhysicalChangeOut):
+    """Both prior and new owner remain represented Parties."""
+
+    from_owner_party_id: UUID
+    to_owner_party_id: UUID
+    corrects_ownership_change_id: UUID | None
+
+
+class AssetDiscrepancy(StateDiscrepancy):
+    """Extend state health with independent physical authorities and bounded version gaps."""
+
+    current_location_id: UUID | None
+    custodian_party_id: UUID | None
+    owner_party_id: UUID
+    initial_facts_present: bool
+    initial_location_id: UUID | None
+    initial_custodian_party_id: UUID | None
+    initial_owner_party_id: UUID | None
+    latest_location_id: UUID | None
+    latest_custodian_party_id: UUID | None
+    latest_owner_party_id: UUID | None
+    latest_movement_result_version: int | None
+    latest_custody_result_version: int | None
+    latest_ownership_result_version: int | None
+    global_missing_version_ranges: list[tuple[int, int]]
+    global_duplicate_versions: list[int]
+    global_ahead_versions: list[int]

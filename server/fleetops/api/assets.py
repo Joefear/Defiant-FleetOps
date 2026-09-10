@@ -8,15 +8,21 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from fleetops.api.asset_schemas import (
+    AssetDiscrepancy,
     AssetOut,
     AssetPatch,
+    CustodyOut,
+    CustodyRequest,
     IdentifierOut,
-    StateDiscrepancy,
+    MovementOut,
+    MovementRequest,
+    OwnershipOut,
+    OwnershipRequest,
     TransitionOut,
     TransitionRequest,
 )
 from fleetops.api.context import RequestContext
-from fleetops.domain import assets
+from fleetops.domain import asset_facts, assets
 from fleetops.domain.lifecycle import LifecycleInvalid
 
 
@@ -34,7 +40,7 @@ def asset_errors():
 
 
 def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) -> APIRouter:
-    """All seven routes use the existing bearer session and transaction-local tenant context."""
+    """Every route uses the existing bearer session and transaction-local tenant context."""
     router = APIRouter()
     Context = Annotated[RequestContext, Depends(authenticated)]
 
@@ -82,9 +88,51 @@ def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) 
                 values=body.model_dump(),
             )
 
-    @router.get("/health/assets/reconciliation", response_model=list[StateDiscrepancy])
+    @router.post("/assets/{asset_id}/movements", response_model=MovementOut, status_code=201)
+    def move(asset_id: UUID, body: MovementRequest, context: Context):
+        """Move or record unknown location under the shared global Asset version."""
+        with asset_errors():
+            return asset_facts.move_asset(context.connection, asset_id, values=body.model_dump())
+
+    @router.get("/assets/{asset_id}/movements", response_model=list[MovementOut])
+    def movements(asset_id: UUID, context: Context):
+        """Read movement history in produced-version order."""
+        with asset_errors():
+            return asset_facts.list_movements(context.connection, asset_id)
+
+    @router.post("/assets/{asset_id}/custody-changes", response_model=CustodyOut, status_code=201)
+    def change_custody(asset_id: UUID, body: CustodyRequest, context: Context):
+        """Change custody independently of ownership and lifecycle state."""
+        with asset_errors():
+            return asset_facts.change_custody(
+                context.connection, asset_id, values=body.model_dump()
+            )
+
+    @router.get("/assets/{asset_id}/custody-changes", response_model=list[CustodyOut])
+    def custody_changes(asset_id: UUID, context: Context):
+        """Read immutable prior/new custody facts."""
+        with asset_errors():
+            return asset_facts.list_custody_changes(context.connection, asset_id)
+
+    @router.post(
+        "/assets/{asset_id}/ownership-changes", response_model=OwnershipOut, status_code=201
+    )
+    def change_ownership(asset_id: UUID, body: OwnershipRequest, context: Context):
+        """Change owner while retaining independent custody and location."""
+        with asset_errors():
+            return asset_facts.change_ownership(
+                context.connection, asset_id, values=body.model_dump()
+            )
+
+    @router.get("/assets/{asset_id}/ownership-changes", response_model=list[OwnershipOut])
+    def ownership_changes(asset_id: UUID, context: Context):
+        """Read immutable ownership history in produced-version order."""
+        with asset_errors():
+            return asset_facts.list_ownership_changes(context.connection, asset_id)
+
+    @router.get("/health/assets/reconciliation", response_model=list[AssetDiscrepancy])
     def reconciliation(context: Context):
-        """Report state disagreements in this tenant; health reads never repair history."""
-        return assets.reconcile_state(context.connection)
+        """Report baseline, history and global-version disagreements without repair."""
+        return asset_facts.reconcile_assets(context.connection)
 
     return router

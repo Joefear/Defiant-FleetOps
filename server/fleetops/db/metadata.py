@@ -652,3 +652,142 @@ for table, columns in (
 ):
     for column in columns:
         Index(f"ix_{table.name}_{column}", table.c.org_id, table.c[column])
+
+# ADR-007: creation truth is immutable and contributes no additional global version.
+# Asset identity is also baseline identity; absence stays visible rather than backfilled.
+asset_initial_facts = Table(
+    "asset_initial_facts",
+    metadata,
+    Column("asset_id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("initial_owner_party_id", Uuid, nullable=False),
+    Column("initial_custodian_party_id", Uuid),
+    Column("initial_location_id", Uuid),
+    Column("actor_id", Uuid, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "recorded_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("statement_timestamp()"),
+    ),
+    UniqueConstraint("org_id", "asset_id", name="uq_asset_initial_facts_asset"),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_asset_initial_facts_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "asset_id"],
+        ["fleetops.assets.org_id", "fleetops.assets.id"],
+        name="fk_asset_initial_facts_asset",
+    ),
+)
+for field, target in (
+    ("initial_owner_party_id", "parties"),
+    ("initial_custodian_party_id", "parties"),
+    ("initial_location_id", "locations"),
+    ("actor_id", "actors"),
+):
+    asset_initial_facts.append_constraint(
+        ForeignKeyConstraint(
+            ["org_id", field],
+            [f"fleetops.{target}.org_id", f"fleetops.{target}.id"],
+            name=f"fk_asset_initial_facts_{field}",
+        )
+    )
+    Index(
+        f"ix_asset_initial_facts_{field}",
+        asset_initial_facts.c.org_id,
+        asset_initial_facts.c[field],
+    )
+
+
+def _physical_history(name, from_field, to_field, target, correction, *, nullable):
+    """Define independent temporal facts with tenant/Asset-safe correction seams.
+
+    The per-class unique version supports authoritative ordering; the shared Asset
+    lock, not a second register, serializes versions across these separate tables.
+    """
+    table = Table(
+        name,
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("org_id", Uuid, nullable=False),
+        Column("asset_id", Uuid, nullable=False),
+        Column("result_version", Integer, nullable=False),
+        Column(from_field, Uuid, nullable=nullable),
+        Column(to_field, Uuid, nullable=nullable),
+        Column("actor_id", Uuid, nullable=False),
+        Column("occurred_at", DateTime(timezone=True), nullable=False),
+        Column(
+            "recorded_at",
+            DateTime(timezone=True),
+            nullable=False,
+            server_default=text("statement_timestamp()"),
+        ),
+        Column("reason", Text, nullable=False),
+        Column(correction, Uuid),
+        Column("client_op_id", Uuid),
+        UniqueConstraint("org_id", "id", name=f"uq_{name}_org_id_id"),
+        UniqueConstraint("org_id", "asset_id", "id", name=f"uq_{name}_asset_id"),
+        UniqueConstraint("org_id", "asset_id", "result_version", name=f"uq_{name}_version"),
+        ForeignKeyConstraint(["org_id"], ["fleetops.organizations.id"], name=f"fk_{name}_org"),
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["fleetops.assets.org_id", "fleetops.assets.id"],
+            name=f"fk_{name}_asset",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "actor_id"],
+            ["fleetops.actors.org_id", "fleetops.actors.id"],
+            name=f"fk_{name}_actor",
+        ),
+        # D6: normal operations leave this inert. A later correction cannot cross Assets.
+        ForeignKeyConstraint(
+            ["org_id", "asset_id", correction],
+            [f"fleetops.{name}.org_id", f"fleetops.{name}.asset_id", f"fleetops.{name}.id"],
+            name=f"fk_{name}_corrects",
+        ),
+        CheckConstraint("result_version > 0", name=f"ck_{name}_version"),
+        CheckConstraint(
+            "length(btrim(reason)) BETWEEN 1 AND 4000 AND reason ~ '[^[:space:]]'",
+            name=f"ck_{name}_reason",
+        ),
+    )
+    for field in (from_field, to_field):
+        table.append_constraint(
+            ForeignKeyConstraint(
+                ["org_id", field],
+                [f"fleetops.{target}.org_id", f"fleetops.{target}.id"],
+                name=f"fk_{name}_{field}",
+            )
+        )
+        Index(f"ix_{name}_{field}", table.c.org_id, table.c[field])
+    Index(f"ix_{name}_actor", table.c.org_id, table.c.actor_id)
+    return table
+
+
+# Nullable location records loss of represented location without inventing a destination.
+asset_movements = _physical_history(
+    "asset_movements",
+    "from_location_id",
+    "to_location_id",
+    "locations",
+    "corrects_movement_id",
+    nullable=True,
+)
+asset_custody_changes = _physical_history(
+    "asset_custody_changes",
+    "from_custodian_party_id",
+    "to_custodian_party_id",
+    "parties",
+    "corrects_custody_change_id",
+    nullable=True,
+)
+asset_ownership_changes = _physical_history(
+    "asset_ownership_changes",
+    "from_owner_party_id",
+    "to_owner_party_id",
+    "parties",
+    "corrects_ownership_change_id",
+    nullable=False,
+)

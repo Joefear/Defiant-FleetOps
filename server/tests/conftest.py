@@ -41,6 +41,7 @@ class Database:
     app_password: str = field(repr=False)
     authenticator_password: str = field(repr=False)
     historical_0005: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0006: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -187,6 +188,11 @@ def disposable_database():
         try:
             with snapshot_engine.connect() as connection:
                 db.historical_0005.update(schema_snapshot(connection))
+            # Capture 0006 before the physical-fact migration has ever run, so an
+            # incomplete downgrade cannot validate itself through a symmetric bug.
+            assert_migration_succeeded(db.migrate("upgrade", "0006_assets"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0006.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -200,7 +206,11 @@ def disposable_database():
                     for name in (
                         "actors",
                         "alembic_version",
+                        "asset_custody_changes",
                         "asset_identifiers",
+                        "asset_initial_facts",
+                        "asset_movements",
+                        "asset_ownership_changes",
                         "asset_transitions",
                         "assets",
                         "external_references",
@@ -220,12 +230,15 @@ def disposable_database():
                     "WHERE n.nspname NOT IN ('information_schema') "
                     "AND left(n.nspname, 3) <> 'pg_' ORDER BY p.proname"
                 ).all() == [
+                    ("change_custody",),
+                    ("change_ownership",),
                     ("current_authenticated_actor",),
                     ("enforce_asset_initial_state",),
                     ("enforce_authenticated_creator",),
                     ("enforce_authenticated_updater",),
                     ("enforce_location_acyclic",),
                     ("issue_session",),
+                    ("move_asset",),
                     ("resolve_session",),
                     ("revoke_current_session",),
                     ("transition_asset",),

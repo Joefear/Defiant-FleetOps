@@ -210,4 +210,12 @@ def test_transition_function_acl_and_safe_object_resolution(migrator_connection,
             "SELECT proname FROM pg_proc JOIN pg_namespace n ON n.oid=pronamespace "
             "WHERE n.nspname='fleetops' AND prosecdef"
         ).scalars()
-    ) == {"resolve_session", "issue_session", "revoke_current_session", "transition_asset"}
+    ) == {
+        "resolve_session",
+        "issue_session",
+        "revoke_current_session",
+        "transition_asset",
+        "move_asset",
+        "change_custody",
+        "change_ownership",
+    }

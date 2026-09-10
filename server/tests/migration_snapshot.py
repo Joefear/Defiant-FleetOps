@@ -21,7 +21,9 @@ def schema_snapshot(connection):
         result[name] = {
             "rows": (
                 connection.execute(
-                    select(metadata.tables[qualified]).order_by(metadata.tables[qualified].c.id)
+                    select(metadata.tables[qualified]).order_by(
+                        *metadata.tables[qualified].primary_key.columns
+                    )
                 ).all()
                 if name != "alembic_version"
                 else connection.exec_driver_sql("SELECT * FROM fleetops.alembic_version").all()
