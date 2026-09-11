@@ -99,6 +99,8 @@ def test_asset_schema_contains_only_authorized_objects_and_text_states(migrator_
         "asset_assignment_events",
         "asset_initial_assignment_facts",
         "asset_configurations",
+        "purchase_orders",
+        "purchase_order_lines",
     }
     assert (
         connection.exec_driver_sql(

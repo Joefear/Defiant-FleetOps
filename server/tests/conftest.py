@@ -43,6 +43,7 @@ class Database:
     historical_0005: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0006: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0007: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0008: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -197,6 +198,9 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0007_asset_fact_history"))
             with snapshot_engine.connect() as connection:
                 db.historical_0007.update(schema_snapshot(connection))
+            assert_migration_succeeded(db.migrate("upgrade", "0008_assignment_configuration"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0008.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -228,6 +232,8 @@ def disposable_database():
                             "organizations",
                             "parties",
                             "party_roles",
+                            "purchase_orders",
+                            "purchase_order_lines",
                             "sessions",
                             "users",
                         )
@@ -248,6 +254,8 @@ def disposable_database():
                     ("enforce_authenticated_creator",),
                     ("enforce_authenticated_updater",),
                     ("enforce_location_acyclic",),
+                    ("enforce_purchase_order",),
+                    ("enforce_purchase_order_line",),
                     ("issue_session",),
                     ("move_asset",),
                     ("resolve_session",),

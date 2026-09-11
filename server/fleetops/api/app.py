@@ -13,6 +13,7 @@ from uuid6 import uuid7
 from fleetops.api.assets import create_asset_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
+from fleetops.api.procurement import create_procurement_router
 from fleetops.api.schemas import (
     ActorCreate,
     ActorOut,
@@ -154,4 +155,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_catalog_router(authenticated))
     app.include_router(create_space_router(authenticated))
     app.include_router(create_asset_router(authenticated))
+    app.include_router(create_procurement_router(authenticated))
     return app

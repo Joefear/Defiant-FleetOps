@@ -97,8 +97,8 @@ def test_populated_0006_round_trip_never_backfills_or_lazily_invents_baseline(
         ]
         assert set(before["functions"]) <= set(upgraded["functions"])
         assert set(before["triggers"]) <= set(upgraded["triggers"])
-        assert len(upgraded["functions"]) == len(before["functions"]) + 5
-        assert len(upgraded["triggers"]) == len(before["triggers"]) + 7
+        assert len(upgraded["functions"]) == len(before["functions"]) + 7
+        assert len(upgraded["triggers"]) == len(before["triggers"]) + 13
         assert role_snapshot(connection) == roles
         assert guard_objects(connection) == (1, 1, 1)
         connection.rollback()

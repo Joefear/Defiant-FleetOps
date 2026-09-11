@@ -12,6 +12,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     Computed,
+    Date,
     DateTime,
     ForeignKeyConstraint,
     Identity,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     MetaData,
+    Numeric,
     Table,
     Text,
     UniqueConstraint,
@@ -31,6 +33,7 @@ from fleetops.domain.identifier_types import IdentifierType
 from fleetops.domain.lifecycle import AssetState
 from fleetops.domain.location_kinds import LocationKind
 from fleetops.domain.party_roles import PartyRole
+from fleetops.domain.procurement_status import PurchaseOrderStatus
 from fleetops.domain.reference_types import ReferenceEntityType
 from fleetops.domain.uom import UnitOfMeasure
 
@@ -981,4 +984,163 @@ assets.append_constraint(
         name="fk_assets_assignment",
         use_alter=True,
     )
+)
+
+# ADR-009: historical versions share a business line number, never record identity.
+purchase_orders = Table(
+    "purchase_orders",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("vendor_party_id", Uuid, nullable=False),
+    Column("vendor_role", Text, Computed("'VENDOR'::text", persisted=True), nullable=False),
+    Column("po_number", Text, nullable=False),
+    Column("status", Text, nullable=False, server_default=text("'DRAFT'")),
+    Column("issued_at", DateTime(timezone=True)),
+    Column("issued_by_actor_id", Uuid),
+    Column("notes", Text),
+    UniqueConstraint("org_id", "id", name="uq_purchase_orders_org_id_id"),
+    ForeignKeyConstraint(["org_id"], ["fleetops.organizations.id"], name="fk_purchase_orders_org"),
+    ForeignKeyConstraint(
+        ["org_id", "vendor_party_id"],
+        ["fleetops.parties.org_id", "fleetops.parties.id"],
+        name="fk_purchase_orders_vendor",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "vendor_party_id", "vendor_role"],
+        [
+            "fleetops.party_roles.org_id",
+            "fleetops.party_roles.party_id",
+            "fleetops.party_roles.role",
+        ],
+        name="fk_purchase_orders_vendor_role",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "issued_by_actor_id"],
+        ["fleetops.actors.org_id", "fleetops.actors.id"],
+        name="fk_purchase_orders_issuer",
+    ),
+    CheckConstraint(
+        "status IN (" + ", ".join(repr(v.value) for v in PurchaseOrderStatus) + ")",
+        name="ck_purchase_orders_status",
+    ),
+    CheckConstraint(
+        "(issued_at IS NULL) = (issued_by_actor_id IS NULL) "
+        "AND (status <> 'DRAFT' OR issued_at IS NULL) "
+        "AND (status <> 'ISSUED' OR issued_at IS NOT NULL)",
+        name="ck_purchase_orders_issuance",
+    ),
+    CheckConstraint(
+        "issued_at IS NULL OR isfinite(issued_at)", name="ck_purchase_orders_issued_time"
+    ),
+    CheckConstraint(
+        "length(btrim(po_number)) BETWEEN 1 AND 200 AND po_number ~ '[^[:space:]]'",
+        name="ck_purchase_orders_number",
+    ),
+    CheckConstraint("notes IS NULL OR length(notes) <= 4000", name="ck_purchase_orders_notes"),
+)
+purchase_order_lines = Table(
+    "purchase_order_lines",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("org_id", Uuid, nullable=False),
+    Column("po_id", Uuid, nullable=False),
+    Column("line_number", Integer, nullable=False),
+    Column("item_id", Uuid, nullable=False),
+    # Unconstrained NUMERIC preserves decimal input without implicit scale rounding.
+    Column("quantity", Numeric, nullable=False),
+    Column("uom", Text, nullable=False),
+    Column("unit_price", Numeric, nullable=False),
+    Column("expected_date", Date),
+    Column("supersedes_line_id", Uuid),
+    UniqueConstraint("org_id", "id", name="uq_purchase_order_lines_org_id_id"),
+    UniqueConstraint(
+        "org_id", "po_id", "line_number", "id", name="uq_purchase_order_lines_lineage_id"
+    ),
+    ForeignKeyConstraint(
+        ["org_id"], ["fleetops.organizations.id"], name="fk_purchase_order_lines_org"
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "po_id"],
+        ["fleetops.purchase_orders.org_id", "fleetops.purchase_orders.id"],
+        name="fk_purchase_order_lines_po",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "item_id"],
+        ["fleetops.items.org_id", "fleetops.items.id"],
+        name="fk_purchase_order_lines_item",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "po_id", "line_number", "supersedes_line_id"],
+        [
+            "fleetops.purchase_order_lines.org_id",
+            "fleetops.purchase_order_lines.po_id",
+            "fleetops.purchase_order_lines.line_number",
+            "fleetops.purchase_order_lines.id",
+        ],
+        name="fk_purchase_order_lines_predecessor",
+    ),
+    CheckConstraint("line_number > 0", name="ck_purchase_order_lines_number"),
+    CheckConstraint(
+        "quantity > 0 AND quantity < 'Infinity'::numeric", name="ck_purchase_order_lines_quantity"
+    ),
+    CheckConstraint(
+        "unit_price >= 0 AND unit_price < 'Infinity'::numeric", name="ck_purchase_order_lines_price"
+    ),
+    CheckConstraint(
+        "expected_date IS NULL OR isfinite(expected_date)",
+        name="ck_purchase_order_lines_expected_date",
+    ),
+    CheckConstraint("id <> supersedes_line_id", name="ck_purchase_order_lines_not_self"),
+    CheckConstraint(
+        "uom IN (" + ", ".join(repr(v.value) for v in UnitOfMeasure) + ")",
+        name="ck_purchase_order_lines_uom",
+    ),
+)
+for procurement_table in (purchase_orders, purchase_order_lines):
+    for attribution in ("created", "updated"):
+        procurement_table.append_column(Column(f"{attribution}_by_actor_id", Uuid, nullable=False))
+        procurement_table.append_column(
+            Column(
+                f"{attribution}_at",
+                DateTime(timezone=True),
+                nullable=False,
+                server_default=text("statement_timestamp()"),
+            )
+        )
+        procurement_table.append_constraint(
+            ForeignKeyConstraint(
+                ["org_id", f"{attribution}_by_actor_id"],
+                ["fleetops.actors.org_id", "fleetops.actors.id"],
+                name=f"fk_{procurement_table.name}_{attribution}_actor",
+            )
+        )
+        Index(
+            f"ix_{procurement_table.name}_{attribution}_actor",
+            procurement_table.c.org_id,
+            procurement_table.c[f"{attribution}_by_actor_id"],
+        )
+Index(
+    "ix_purchase_orders_vendor",
+    purchase_orders.c.org_id,
+    purchase_orders.c.vendor_party_id,
+    purchase_orders.c.vendor_role,
+)
+Index("ix_purchase_orders_issuer", purchase_orders.c.org_id, purchase_orders.c.issued_by_actor_id)
+Index("ix_purchase_order_lines_item", purchase_order_lines.c.org_id, purchase_order_lines.c.item_id)
+# One root per logical line and one successor per predecessor jointly exclude duplicate leaves.
+Index(
+    "uq_purchase_order_lines_root",
+    purchase_order_lines.c.org_id,
+    purchase_order_lines.c.po_id,
+    purchase_order_lines.c.line_number,
+    unique=True,
+    postgresql_where=text("supersedes_line_id IS NULL"),
+)
+Index(
+    "uq_purchase_order_lines_successor",
+    purchase_order_lines.c.org_id,
+    purchase_order_lines.c.supersedes_line_id,
+    unique=True,
+    postgresql_where=text("supersedes_line_id IS NOT NULL"),
 )

@@ -144,6 +144,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "asset_assignment_events",
         "asset_initial_assignment_facts",
         "asset_configurations",
+        "purchase_orders",
+        "purchase_order_lines",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -159,6 +161,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "enforce_authenticated_creator",
             "enforce_authenticated_updater",
             "enforce_location_acyclic",
+            "enforce_purchase_order",
+            "enforce_purchase_order_line",
             "issue_session",
             "move_asset",
             "resolve_session",

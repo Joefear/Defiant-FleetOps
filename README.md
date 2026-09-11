@@ -589,7 +589,7 @@ Receiving, evidence, corrections and offline capture remain deferred.
 
 ## Slice 7 assignment and configuration records
 
-Migration head `0008_assignment_configuration` follows `0007_asset_fact_history`.
+Slice 7 revision `0008_assignment_configuration` follows `0007_asset_fact_history`.
 It implements [ADR-008](docs/architecture/ADR-008.md) using three new tables and
 two narrow assignment functions. Migrations 0001–0007 remain unchanged.
 
@@ -693,4 +693,80 @@ metadata agreement. Downgrade restores the 0007 NULL-only projection constraint
 before removing any Slice 7 objects, and fails atomically if assignments remain active.
 It does not synthesize unassignment to make a downgrade succeed.
 
-Slice 7 awaits independent review. No commit, push or Slice 8 work is included.
+Slice 7 is the accepted baseline for Slice 8.
+
+## Slice 8 procurement expectations
+
+Migration head `0009_procurement` follows `0008_assignment_configuration`.
+Purchase orders record supplier expectations. A same-tenant VENDOR Party supplies
+the order; the Item manufacturer remains a separate catalog fact. Opaque UUIDs
+identify orders and each permanent line version. `po_number` is display context
+and may repeat; a positive `line_number` groups versions within one order.
+
+Orders begin DRAFT. Draft PO metadata and line Item, quantity, price and expected
+date may be edited. Creation identity, original attribution, lineage and the UOM
+snapshot remain protected. The explicit issue operation changes DRAFT to ISSUED,
+records the credential-derived issuer and server UTC time, and freezes the order
+and every existing line in one transaction. No minimum-line approval workflow is
+introduced, so an empty draft may be issued. CLOSED and CANCELLED remain vocabulary
+values without transition endpoints or amendment authority in this slice.
+
+Issued rows reject UPDATE and DELETE, including ordinary migrator DML. An amendment
+inserts a new line with `supersedes_line_id` pointing to the exact active predecessor
+in the same tenant, PO and logical line number. It changes no predecessor column,
+timestamp or attribution. Each successor is immediately frozen. Partial unique
+indexes enforce one root per logical line and one successor per predecessor. An
+immediate composite foreign key, existing-predecessor check and immutable pointers
+prevent cycles. Line writes and issuance hold a conflicting PO row lock through
+commit; competing roots or amendments cannot both win. No PO version or global
+procurement sequence is used. Distinct lineages on one PO serialize at this boundary.
+
+Active status means no successor exists; superseded status means a successor exists.
+Neither is stored. History returns every version ordered by logical line number and
+root-to-leaf pointers, independent of UUID or timestamp order. A future receipt can
+reference the exact permanent line UUID without dynamically retargeting an amendment.
+
+Every new line version copies its selected Item's current `items.uom` under an Item
+row lock. The caller cannot supply UOM. For example, an EA root remains EA after the
+Item default changes to M; a subsequent valid version snapshots M. Draft Item edits
+also retain the original line snapshot. The governed UOM vocabulary is unchanged.
+Quantity is positive finite PostgreSQL NUMERIC; unit price is nonnegative finite
+NUMERIC, with no imposed scale or silent scale rounding. Price remains procurement
+context. Optional `expected_date` is a finite calendar date, not a receipt event time.
+
+All nine routes require bearer authentication and reject extra request fields:
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /purchase-orders | Create a DRAFT from vendor_party_id, po_number and optional notes. |
+| GET /purchase-orders | List tenant-visible orders. |
+| GET /purchase-orders/{po_id} | Read one order. |
+| PATCH /purchase-orders/{po_id} | Edit draft vendor, number or notes. |
+| POST /purchase-orders/{po_id}/issue | Issue atomically; accepts no authority fields. |
+| POST /purchase-orders/{po_id}/lines | Create a draft root from line_number, item_id, quantity, unit_price and optional expected_date. |
+| GET /purchase-orders/{po_id}/lines | Read all immutable versions and derived active/superseded status. |
+| PATCH /purchase-orders/{po_id}/lines/{line_id} | Edit permitted draft line inputs. |
+| POST /purchase-orders/{po_id}/lines/{line_id}/supersede | Append an amendment from item_id, quantity, unit_price and optional expected_date. |
+
+Missing and invisible targets return 404, stale/inadmissible workflow state returns
+409, and invalid business inputs or relationships return 422. Actor IDs, organization,
+server timestamps, UOM, lineage/active markers, receipt and accounting authority are
+excluded from requests. Existing ADR-006 creator/updater triggers bind direct runtime
+SQL as well as HTTP. Two narrow SECURITY INVOKER guards enforce procurement invariants;
+no new SECURITY DEFINER function or authentication authority is added. Tenant RLS and
+same-tenant foreign keys cover both tables. Runtime DELETE and TRUNCATE are denied.
+
+Procurement leaves Asset versions, histories, projections and reconciliation unchanged.
+It creates no Assets or receipt records, adds no receiving or accounting workflow,
+and changes no external-reference attachment/search behavior. Procurement amendments
+express changed expectations; true record correction remains Slice 10. Slice 9 remains
+unopened. Run the dedicated real PostgreSQL proofs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice8
+```
+
+The proofs include raw runtime SQL, active-guard migrator updates, tenant/credential
+attacks, observed concurrency, and fresh/populated 0008 downgrade/re-upgrade comparisons
+of schema, data, functions, triggers, policies, privileges and the existing sequence.
+Slice 8 awaits independent review; no commit or push is included.
