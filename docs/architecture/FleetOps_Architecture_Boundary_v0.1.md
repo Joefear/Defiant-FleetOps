@@ -116,7 +116,9 @@ Availability has exactly one definition, computed in exactly one place: on hand,
 
 A purchase order records what was expected. A receipt records what physically arrived. Neither is ever edited to make the other agree.
 
-Where they disagree, the disagreement becomes a first-class exception record. The v0.1 exception types are: short, over, substitution, damaged, opened, unreadable identifier, serial mismatch, unexpected item, quantity variance. Missing lot is added with the materials layer.
+Where they disagree, the disagreement becomes a first-class exception record. The v0.1 exception types are: short, over, substitution, damaged, opened, unreadable identifier, serial mismatch, unexpected item, quantity variance, UOM mismatch. Missing lot is added with the materials layer.
+
+UOM mismatch records that the actual receipt UOM differs from the immutable expected purchase order line UOM and FleetOps has no governed conversion authority for comparing the quantities. It signals incomparability only. It does not establish equality, short, over, substitution, quantity variance, or successful or failed conversion, and does not authorize unit conversion.
 
 Receiving personnel must always be able to record what is actually in front of them.
 
@@ -387,6 +389,7 @@ This document is authoritative because Defiant has designated it the governing c
 - 4 Sep 2026 — Correction pass 1: D12 scope qualified; D8 orthogonality; D16 receipt-versus-clock-start; v0.1/RMA contradiction removed from Section 9; scope guard; Sections 8 and 9 brought under change control; D18 and D11 wording; circularity closures in D3, D9, and Section 7.
 - 4 Sep 2026 — Correction pass 2: Section 6 declaration wording; D7 temporal history; D15 scoped to introduced workflows.
 - 4 Sep 2026 — Consolidated rewrite (this version): D5 exception list made explicit and unreadable identifier added; Section 9 delivery disambiguated (six workstations, one scanner short, nine serialized units) so that the expected exception set is exact; Section 3.2 and Section 6 clarified for requisition, approval, and cost attribution; Section 10 excludes request records and governed operations explicitly; Section 8 scope text aligned; appendices added. Frozen.
+- 11 Sep 2026 — AMR-001 applied: added UOM mismatch to D5 so receiving can preserve differing expected/actual UOM without unauthorized conversion; existing exception meanings and the Section 9 acceptance scenario remain unchanged.
 
 # Appendix A. Glossary (non-normative)
 
