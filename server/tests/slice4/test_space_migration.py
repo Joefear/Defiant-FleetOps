@@ -146,6 +146,11 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "asset_configurations",
         "purchase_orders",
         "purchase_order_lines",
+        "receipts",
+        "receipt_comparators",
+        "receipt_lines",
+        "receipt_reconciliations",
+        "receiving_exceptions",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -156,6 +161,7 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "assign_asset",
             "change_custody",
             "change_ownership",
+            "create_received_unit",
             "current_authenticated_actor",
             "enforce_asset_initial_state",
             "enforce_authenticated_creator",
@@ -163,7 +169,11 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "enforce_location_acyclic",
             "enforce_purchase_order",
             "enforce_purchase_order_line",
+            "enforce_receiving_completeness",
+            "enforce_receiving_exception",
+            "enforce_receiving_record",
             "issue_session",
+            "lock_receiving_context",
             "move_asset",
             "resolve_session",
             "revoke_current_session",

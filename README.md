@@ -1,9 +1,10 @@
 # Defiant FleetOps
 
-Slice 6 adds immutable initial physical facts, movement, custody and ownership
-history to Assets and controlled lifecycle transitions. All four history classes
-share one Asset version and row lock. It honours D1, D3, D7, D8, D10, D11, D12,
-D18, ADR-001 through ADR-007, and Build Handoff v1.3.
+Slice 9 adds immutable receiving reality, production serialized Asset creation and
+all ten receiving Exception types. Exact PO-line comparators, receipt-local quantity
+reconciliation and the known serial-conflict observation path follow accepted
+ADR-010 through ADR-012. Earlier identity, catalog, space, Asset history, assignment,
+configuration and procurement behavior remains in place.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
@@ -78,8 +79,8 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head is `0007_asset_fact_history` and includes the
-Slice 2 through Slice 6 tables described below.
+bookkeeping table is empty. Head is `0010_receiving` and includes the
+Slice 2 through Slice 9 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -381,7 +382,8 @@ pool reuse, production privileges, and Slice 3/4 migration round trips. Malforme
 tests use actual persisted rows; test-only constraint changes are restored in cleanup.
 
 External-reference targets remain ITEM and PARTY. Space records represent where things
-can be; assets, movement, custody, receiving, and inventory remain deferred.
+can be. Assets, movement, custody and receiving are implemented in later slices
+described below; inventory remains deferred.
 
 Slice closure requires independent reviewer approval. No commit, push, or Slice 5 work
 is part of this implementation.
@@ -466,7 +468,7 @@ All tables retain ADR-002 RLS USING/WITH CHECK and the restrictive tenant bounda
 | GET /assets | List the authenticated tenant's Assets. |
 | GET /assets/{asset_id} | Read by FleetOps UUID only. |
 | PATCH /assets/{asset_id} | Edit non-null asset_tag/description; record authenticated updater and database time without incrementing operational version. |
-| GET /assets/{asset_id}/identifiers | Read identifiers captured in controlled fixtures until receiving exists. |
+| GET /assets/{asset_id}/identifiers | Read identifiers captured by receiving or controlled fixtures. |
 | POST /assets/{asset_id}/transitions | Accept expected_version, from_state, to_state, reason and aware occurred_at; return the immutable transition. |
 | GET /assets/{asset_id}/transitions | Return result_version ASC, regardless of timestamp/UUID order. |
 | GET /health/assets/reconciliation | Report this tenant's state discrepancies; never repair them. |
@@ -585,7 +587,7 @@ version checks and lock retention after function return. Migration tests compare
 fresh and populated 0006 snapshots through downgrade/re-upgrade, prove no backfill,
 and check exact schema/security restoration and Alembic metadata agreement.
 
-Receiving, evidence, corrections and offline capture remain deferred.
+Evidence, corrections and offline capture remain deferred; Slice 9 receiving is described below.
 
 ## Slice 7 assignment and configuration records
 
@@ -697,7 +699,7 @@ Slice 7 is the accepted baseline for Slice 8.
 
 ## Slice 8 procurement expectations
 
-Migration head `0009_procurement` follows `0008_assignment_configuration`.
+Slice 8 revision `0009_procurement` follows `0008_assignment_configuration`.
 Purchase orders record supplier expectations. A same-tenant VENDOR Party supplies
 the order; the Item manufacturer remains a separate catalog fact. Opaque UUIDs
 identify orders and each permanent line version. `po_number` is display context
@@ -723,7 +725,7 @@ procurement sequence is used. Distinct lineages on one PO serialize at this boun
 
 Active status means no successor exists; superseded status means a successor exists.
 Neither is stored. History returns every version ordered by logical line number and
-root-to-leaf pointers, independent of UUID or timestamp order. A future receipt can
+root-to-leaf pointers, independent of UUID or timestamp order. A receipt can
 reference the exact permanent line UUID without dynamically retargeting an amendment.
 
 Every new line version copies its selected Item's current `items.uom` under an Item
@@ -759,8 +761,8 @@ same-tenant foreign keys cover both tables. Runtime DELETE and TRUNCATE are deni
 Procurement leaves Asset versions, histories, projections and reconciliation unchanged.
 It creates no Assets or receipt records, adds no receiving or accounting workflow,
 and changes no external-reference attachment/search behavior. Procurement amendments
-express changed expectations; true record correction remains Slice 10. Slice 9 remains
-unopened. Run the dedicated real PostgreSQL proofs with:
+express changed expectations; true record correction remains Slice 10. Receiving is
+implemented separately in Slice 9 below. Run the dedicated real PostgreSQL proofs with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v server/tests/slice8
@@ -769,4 +771,172 @@ unopened. Run the dedicated real PostgreSQL proofs with:
 The proofs include raw runtime SQL, active-guard migrator updates, tenant/credential
 attacks, observed concurrency, and fresh/populated 0008 downgrade/re-upgrade comparisons
 of schema, data, functions, triggers, policies, privileges and the existing sequence.
-Slice 8 awaits independent review; no commit or push is included.
+Slice 8 is the accepted baseline for Slice 9.
+
+## Slice 9 receiving and reconciliation Exceptions
+
+Revision `0010_receiving` follows `0009_procurement` and implements accepted
+[ADR-010](docs/architecture/ADR-010.md), [ADR-011](docs/architecture/ADR-011.md) and
+[ADR-012](docs/architecture/ADR-012.md). Expected PO facts and actual receiving
+facts remain separate. Receiving never edits the PO, its line versions, price,
+UOM snapshots or supersession lineage.
+
+Five tenant-owned, immutable tables record this workflow:
+
+| Table | Stored purpose |
+| --- | --- |
+| `receipts` | Vendor, optional PO, observed dock, optional packing reference, received time and authenticated attribution. |
+| `receipt_comparators` | Exact selected PO-line UUIDs, including an included expectation with no physical arrival. |
+| `receipt_lines` | Actual Item, positive finite quantity, actual UOM, one condition, optional packing count, serialization snapshot, explicit unit owner/custodian, optional newly created Asset, and known-conflict observed identifier pair. |
+| `receipt_reconciliations` | One immutable completion witness closing a receipt's physical comparison population. |
+| `receiving_exceptions` | Server-derived type and exact typed receipt, line, comparator, received-Asset and conflicting-Asset relationships. |
+
+Every row carries an opaque UUID, non-null organization, credential-derived Actor,
+claimed `occurred_at`, and database `recorded_at`. Child occurrence claims retain
+the receipt's `received_at`. Runtime cannot supply attribution or recording time.
+All tables use restrictive tenant RLS and composite tenant references. Missing
+scope reads no rows; missing/invalid credentials cannot write. Actual Item,
+quantity, UOM, condition, comparator and observed serial cannot be rewritten.
+No runtime DELETE or TRUNCATE is granted. An id-only UPDATE privilege enables
+receipt row locking; an immutable trigger rejects every actual receipt UPDATE.
+
+### Capture and comparator admission
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /receipts | Capture the supplied delivery atomically; `reconcile` defaults to true. Use false to begin incremental capture. |
+| GET /receipts | List authenticated-tenant receipts, observations and Exceptions. |
+| GET /receipts/{receipt_id} | Read one immutable receiving record and derived completion status. |
+| POST /receipts/{receipt_id}/lines | Append one physical line and its complete Asset/Exception consequences while capture is open. |
+| POST /receipts/{receipt_id}/reconcile | Close the receipt once and derive receipt-local quantity Exceptions. Accepts no authority fields. |
+
+A PO-backed line supplies its exact immutable `purchase_order_lines.id` as
+`po_line_id`. An optional header `comparator_ids` list also admits expectations
+with zero arrivals, allowing SHORT without a fictional line or Asset. The server
+requires same organization, same receipt PO, ISSUED parent and current active leaf.
+Each new physical line revalidates the target even if its comparator was admitted
+earlier. Stale selection returns 409; it never selects a successor for the caller.
+
+Receiving and procurement supersession retain the same PO `FOR NO KEY UPDATE`
+lock until commit. Receiving locks PO before receipt. A supersession that commits
+first makes the old target stale; a receipt that commits first keeps its historical
+UUID after a later supersession. Receiving writes require READ COMMITTED and reject
+stronger snapshot isolation with a retryable conflict, avoiding old-snapshot
+admission after waiting on an unchanged PO row.
+
+Full-delivery capture creates all observations and reconciles in one transaction.
+Incremental capture commits each line's complete consequences, then reconciles all
+stored lines when the caller closes capture. Quantity Exceptions are created only
+at that boundary; earlier line Exceptions are never replaced. After completion,
+further lines, comparator bindings and repeated reconciliation reject. The
+`reconciled` read field derives from witness presence, with no mutable PO projection.
+
+### Quantities and typed relationships
+
+Actual UOM uses exactly EA, M, MM, CM, IN, FT, G, MG, KG, ML or L. Only exact token
+equality with the selected comparator permits arithmetic. Quantities use unscaled
+PostgreSQL NUMERIC, and database summation preserves arbitrary precision. Python
+derives classifications; database guards independently enforce shapes, context,
+classification truth, required completeness and uniqueness.
+
+For receipt R and exact comparator L, the population is all stored lines in R
+referencing L. Comparable total below expectation creates one SHORT; above creates
+one OVER; equality creates neither. Empty included population totals zero. Any
+incomparable member blocks SHORT, OVER and an equality conclusion for that R/L,
+even when the comparable subtotal meets or exceeds expectation. Each mismatching
+line receives its own UOM_MISMATCH. Substitution and known serial-conflict lines
+still participate in that same physical population. Different receipts and
+different comparator versions never accumulate together: separate receipts of
+8 EA and 4 EA against 10 EA each produce SHORT.
+
+All Exceptions require a receipt. In the matrix below, "conditional" means the
+exact comparator of the referenced receipt line, or NULL for an unexpected line.
+"Optional" permits only the newly created Asset for that physical line.
+
+| Type | Receipt line | PO line | Asset | Conflicting Asset |
+| --- | --- | --- | --- | --- |
+| SHORT | NULL | Required | NULL | NULL |
+| OVER | NULL | Required | NULL | NULL |
+| SUBSTITUTION | Required | Required | Optional | NULL |
+| DAMAGED | Required | Conditional | Optional | NULL |
+| OPENED | Required | Conditional | Optional | NULL |
+| SERIAL_UNREADABLE | Required | Conditional | Required | NULL |
+| SERIAL_MISMATCH | Required | Conditional | NULL | Required |
+| UNEXPECTED_ITEM | Required | NULL | Optional | NULL |
+| QUANTITY_VARIANCE | Required | Conditional | NULL | NULL |
+| UOM_MISMATCH | Required | Required | Optional | NULL |
+
+The one condition field is GOOD, DAMAGED, OPENED or UNKNOWN. DAMAGED and OPENED
+cannot both describe one line; GOOD and UNKNOWN derive neither condition Exception.
+QUANTITY_VARIANCE means actual line quantity differs from its packing-reference
+count. Supplying a packing count requires a packing reference. It does not mean
+PO shortage or UOM conversion. Independently true disagreement types coexist.
+Partial unique indexes prevent same-type duplicates per line or receipt/comparator.
+
+### Serialized physical units
+
+Each serialized line represents one observed physical unit, with one required
+`unit` input and quantity exactly 1 under every governed UOM. Non-unit serialized
+quantities reject in both the service and database, including known serial conflicts;
+the captured UOM is preserved. Nonserialized quantity lines have no unit or Asset and create no
+inventory balance.
+
+Normal admission requires an explicit same-tenant `owner_party_id`, optional
+independent `custodian_party_id`, and the receipt dock. Vendor, manufacturer and
+Actor never supply implicit ownership. A narrow receipt-owned
+`create_received_unit` SECURITY DEFINER function atomically creates the Asset at
+RECEIVED/version 1, its NULL-to-RECEIVED transition/result version 1, matching
+ADR-007 owner/custodian/dock baseline, independent ADR-008 initial-unassigned
+witness, canonical identifier, and physical receipt line. Python adds applicable
+Exceptions in the same transaction; deferred checks prevent incomplete commit.
+Failure of any required component rolls back the whole operation. Subsequent
+movement starts at that immutable dock baseline.
+
+Identifiers use MANUFACTURER_SERIAL, PCB_SERIAL, MAC, IMEI or OTHER. A readable
+value is preserved exactly. Unreadable input requires NULL value and a nonblank
+reason, creates the complete normal Asset bundle, and derives SERIAL_UNREADABLE.
+No fake serial is generated.
+
+Before normal admission, a readable identifier already owned under
+`(org_id, type, value)` follows ADR-012's known-conflict observation path. It records
+the physical line and SERIAL_MISMATCH, preserves immutable nonunique
+`observed_identifier_type`/`observed_identifier_value`, and references the existing
+canonical owner only as `conflicting_asset_id`. It creates no Asset, canonical
+identifier, lifecycle transition or baseline/witness, and never changes or reuses
+the existing Asset as the received identity. Other lines keep both observation
+fields NULL. Independent observations of the same conflict remain recordable.
+
+A concurrent claim after normal admission instead fails canonical uniqueness and
+rolls the whole losing transaction back. There is no savepoint conversion or
+in-place SERIAL_MISMATCH fallback. A fresh retry may then observe the committed
+conflict and use the known-conflict path.
+
+The creation function is migrator-owned, fixes its search path to
+`pg_catalog, pg_temp`, explicitly checks tenant relationships, derives Actor from
+credentials and grants runtime EXECUTE only to `fleetops_app`. It cannot create an
+unlinked manual Asset. There is no generic Exception creation API or separate
+production Asset/baseline/witness creation endpoint. Strict request models reject
+classification, Actor, tenant, conversion, fulfillment, correction, evidence,
+label and offline authority.
+
+### Verification and scope
+
+The frozen delivery produces exactly SUBSTITUTION, SERIAL_UNREADABLE, SHORT and
+UNEXPECTED_ITEM, and exactly nine complete serialized Assets. The missing scanner
+has no fictional line or Asset; the unexpected accessory has no Asset or balance.
+Both full-delivery and incremental capture are tested.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice9
+.\.venv\Scripts\python.exe -m server.tests.slice9.probe_receiving
+```
+
+Tests use real PostgreSQL 16 for runtime credentials, every matrix shape, tenant
+coherence, immutable history, injected component failure, actual blocked races,
+and exact fresh/populated 0009 downgrade/re-upgrade restoration. Independent
+A–AG probes use HTTP workflows plus raw psycopg assertions and SQL races in a
+separate disposable cluster.
+
+Slice 10 corrections, evidence storage, labels, offline/idempotent capture,
+materials/lots/stock ledger, RMA/shipping, accounting, UOM conversion and
+cross-receipt fulfillment remain deferred. Slice 9 awaits independent review.

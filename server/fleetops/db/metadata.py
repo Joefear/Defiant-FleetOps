@@ -28,6 +28,7 @@ from sqlalchemy import (
     text,
 )
 
+from fleetops.db.receiving_schema import define_receiving_tables
 from fleetops.domain.actor_types import ActorType
 from fleetops.domain.identifier_types import IdentifierType
 from fleetops.domain.lifecycle import AssetState
@@ -1143,4 +1144,8 @@ Index(
     purchase_order_lines.c.supersedes_line_id,
     unique=True,
     postgresql_where=text("supersedes_line_id IS NOT NULL"),
+)
+
+(receipts, receipt_comparators, receipt_lines, receipt_reconciliations, receiving_exceptions) = (
+    define_receiving_tables(metadata)
 )

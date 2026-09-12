@@ -44,6 +44,7 @@ class Database:
     historical_0006: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0007: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0008: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0009: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -201,6 +202,10 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0008_assignment_configuration"))
             with snapshot_engine.connect() as connection:
                 db.historical_0008.update(schema_snapshot(connection))
+            # Capture procurement before receiving has ever existed in this cluster.
+            assert_migration_succeeded(db.migrate("upgrade", "0009_procurement"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0009.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -234,6 +239,11 @@ def disposable_database():
                             "party_roles",
                             "purchase_orders",
                             "purchase_order_lines",
+                            "receipts",
+                            "receipt_comparators",
+                            "receipt_lines",
+                            "receipt_reconciliations",
+                            "receiving_exceptions",
                             "sessions",
                             "users",
                         )
@@ -249,6 +259,7 @@ def disposable_database():
                     ("assign_asset",),
                     ("change_custody",),
                     ("change_ownership",),
+                    ("create_received_unit",),
                     ("current_authenticated_actor",),
                     ("enforce_asset_initial_state",),
                     ("enforce_authenticated_creator",),
@@ -256,7 +267,11 @@ def disposable_database():
                     ("enforce_location_acyclic",),
                     ("enforce_purchase_order",),
                     ("enforce_purchase_order_line",),
+                    ("enforce_receiving_completeness",),
+                    ("enforce_receiving_exception",),
+                    ("enforce_receiving_record",),
                     ("issue_session",),
+                    ("lock_receiving_context",),
                     ("move_asset",),
                     ("resolve_session",),
                     ("revoke_current_session",),

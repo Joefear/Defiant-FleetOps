@@ -51,10 +51,15 @@ def sequence_snapshot(connection):
 
 
 def assert_only_slice7_changes(before, upgraded):
-    """Allow only the Slice 7 changes plus Slice 8 procurement objects at current head."""
+    """Allow only the Slice 7 changes plus Slice 8/9 objects at current head."""
     assert set(upgraded) == set(before) | {table.name for table in TABLES} | {
         "purchase_orders",
         "purchase_order_lines",
+        "receipts",
+        "receipt_comparators",
+        "receipt_lines",
+        "receipt_reconciliations",
+        "receiving_exceptions",
     }
     for name, definition in before.items():
         if name not in {"assets", "alembic_version", "functions", "triggers"}:
@@ -73,9 +78,9 @@ def assert_only_slice7_changes(before, upgraded):
         )
     }
     assert set(before["functions"]) <= set(upgraded["functions"])
-    assert len(upgraded["functions"]) == len(before["functions"]) + 4
+    assert len(upgraded["functions"]) == len(before["functions"]) + 9
     assert set(before["triggers"]) <= set(upgraded["triggers"])
-    assert len(upgraded["triggers"]) == len(before["triggers"]) + 9
+    assert len(upgraded["triggers"]) == len(before["triggers"]) + 22
 
 
 def test_fresh_0007_round_trip_restores_exact_schema_security_and_sequence(fresh_database):

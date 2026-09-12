@@ -11,15 +11,23 @@ from fleetops.db.metadata import purchase_orders as orders
 
 
 def assert_only_procurement_added(before, after):
-    """Every prior table, row, trigger, function and security definition remains exact."""
-    assert set(after) == set(before) | {"purchase_orders", "purchase_order_lines"}
+    """Preserve every prior object; allow exactly the current procurement/receiving additions."""
+    assert set(after) == set(before) | {
+        "purchase_orders",
+        "purchase_order_lines",
+        "receipts",
+        "receipt_comparators",
+        "receipt_lines",
+        "receipt_reconciliations",
+        "receiving_exceptions",
+    }
     for name, definition in before.items():
         if name not in {"alembic_version", "functions", "triggers"}:
             assert after[name] == definition
     assert set(before["functions"]) < set(after["functions"])
-    assert len(after["functions"]) == len(before["functions"]) + 2
+    assert len(after["functions"]) == len(before["functions"]) + 7
     assert set(before["triggers"]) < set(after["triggers"])
-    assert len(after["triggers"]) == len(before["triggers"]) + 6
+    assert len(after["triggers"]) == len(before["triggers"]) + 19
     assert after["purchase_orders"]["rows"] == after["purchase_order_lines"]["rows"] == []
 
 
