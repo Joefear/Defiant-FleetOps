@@ -66,8 +66,8 @@ def main():
                 assert version.startswith("16.15"), version
                 assert owner.execute(
                     "SELECT version_num FROM fleetops.alembic_version"
-                ).fetchone() == ("0013_labels",)
-                mark("real PostgreSQL 16.15 and the 0013 migration head")
+                ).fetchone() == ("0014_capture",)
+                mark("real PostgreSQL 16.15 with the label schema preserved at the 0014 head")
                 a, b = seed(owner), seed(owner)
                 settings = replace(database.settings(a["org"]), label_output_root=output)
                 with TestClient(create_app(settings)) as client:
@@ -261,7 +261,7 @@ def main():
                     assert "Cannot downgrade accepted label records" in refused.stderr
                     assert owner.execute(
                         "SELECT version_num FROM fleetops.alembic_version"
-                    ).fetchone() == ("0013_labels",)
+                    ).fetchone() == ("0014_capture",)
                     assert (
                         owner.execute("SELECT count(*) FROM fleetops.print_jobs").fetchone()[0] == 7
                     )

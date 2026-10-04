@@ -41,5 +41,5 @@ def test_downgrade_refuses_captured_evidence_atomically(
         migrator_connection.exec_driver_sql(
             "SELECT version_num FROM fleetops.alembic_version"
         ).scalar_one()
-        == "0013_labels"
+        == "0014_capture"
     )

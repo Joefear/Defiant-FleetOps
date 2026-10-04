@@ -118,6 +118,10 @@ def test_asset_schema_contains_only_authorized_objects_and_text_states(migrator_
         "attachment_links",
         "label_templates",
         "print_jobs",
+        "capture_streams",
+        "capture_operations",
+        "sync_conflicts",
+        "sync_conflict_events",
     }
     assert (
         connection.exec_driver_sql(

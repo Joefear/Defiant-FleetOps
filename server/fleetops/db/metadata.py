@@ -1270,6 +1270,12 @@ receipt_comparators.append_constraint(
 
 attachments, attachment_links = define_evidence_tables(metadata)
 label_templates, print_jobs = define_label_tables(metadata)
+
+from fleetops.db.capture_schema import define_capture_tables  # noqa: E402
+
+capture_streams, capture_operations, sync_conflicts, sync_conflict_events = define_capture_tables(
+    metadata
+)
 for evidence_table in (asset_transitions, asset_configurations):
     Index(
         f"ix_{evidence_table.name}_evidence",

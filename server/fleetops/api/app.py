@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from uuid6 import uuid7
 
 from fleetops.api.assets import create_asset_router
+from fleetops.api.capture import create_capture_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
 from fleetops.api.evidence import create_evidence_router
@@ -176,4 +177,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         create_evidence_router(authenticated, upload_limit=settings.evidence_upload_limit)
     )
     app.include_router(create_label_router(authenticated, output_root=settings.label_output_root))
+    app.include_router(create_capture_router(authenticated, engine, bearer, evidence_storage))
     return app

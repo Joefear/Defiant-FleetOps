@@ -1,8 +1,8 @@
 """Durable tenant references, migration seeds, and privilege boundaries."""
 
 import pytest
-from conftest import TABLES
 from server.tests.auth_context import set_authenticated
+from server.tests.slice2.conftest import TABLES
 from sqlalchemy import Column, MetaData, Table, Uuid, select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7

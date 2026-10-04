@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from conftest import TABLES
+from server.tests.slice2.conftest import TABLES
 from sqlalchemy import select
 
 from fleetops.auth import PASSWORD_HASHER
@@ -298,9 +298,11 @@ def test_http_scope_has_no_later_slice_or_user_management_routes(client):
             "/redoc",
         )
     }
-    # Keep an exact current-head allowlist: only authorized Slice 3 through 12 routes
+    # Keep an exact current-head allowlist: only authorized Slice 3 through 13 routes
     # extend the original surface. User management and later workflows remain excluded.
     assert methods == {
+        ("POST", "/capture/operations"),
+        ("GET", "/resolve/{identifier}"),
         ("POST", "/label-templates"),
         ("GET", "/label-templates"),
         ("POST", "/assets/{asset_id}/labels"),

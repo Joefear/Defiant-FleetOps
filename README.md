@@ -1105,5 +1105,62 @@ fails closed. New print requests are new jobs; successful jobs are not rewritten
 The output directory is trusted administrator-owned storage. Reparse points are
 rejected; privileged host mutation remains outside that boundary. No output-retention
 deletion policy or physical-printer exactly-once guarantee is introduced. A downgrade
-over accepted templates or print jobs is refused. Offline capture and the PWA remain
-later slices.
+over accepted templates or print jobs is refused. The capture server follows in Slice 13;
+the PWA follows in Slice 14.
+
+## Slice 13 â€” Capture API and offline operation contract
+
+Revision `0014_capture` follows `0013_labels`. `POST /capture/operations` accepts
+`{"operations": [...]}`, with 1â€“100 queued operations. Each envelope supplies
+`operation_id`, `actor_id` (a claim checked against the current bearer credential),
+`client_id`, `client_epoch`, positive `client_seq`, `entity_type`, `entity_id`,
+optional positive `expected_version`, `operation`, object `payload`, and a
+timezone-aware `occurred_at`. Organization and recording time are server-owned.
+Payloads are bounded to 32,000 encoded bytes.
+
+Operations from each client epoch are sorted by sequence within a submitted batch.
+Responses retain input positions. A sequence gap applies and returns SEQUENCE_GAP;
+an earlier/reused sequence with a different operation UUID applies if otherwise valid
+and returns SEQUENCE_REUSED. A new epoch resets ordering. Streams bind to their first
+authenticated Actor; after changing Actor, use a new epoch. These are ordering claims,
+never device authentication.
+
+Each operation uses its own transaction and current credential check. Domain effects,
+a terminal APPLIED/REJECTED capture record and any required sync conflict commit
+together. Repeating an operation UUID under the same authenticated Actor returns the
+original result and record time with response state DUPLICATE, without writesâ€”even
+if its repeated payload differs. UUID collisions outside that credential's scope
+return a bounded rejection and disclose no prior result.
+
+MOVE, ASSIGN, UNASSIGN and TRANSITION target ASSET and require its shared global
+expected_version. Their payloads use the existing domain request fields, excluding
+expected_version and occurred_at, which belong in the envelope. They hold the same
+Asset row lock as online operations, compare after locking, and preserve existing
+history, lifecycle, evidence and tenant validation. Mismatch records REJECTED and
+opens a SYNC_CONFLICT with expected/current historical facts; no silent retry or
+last-writer-wins path exists. A future expected version is honestly marked unknown.
+
+RECEIVE_SCAN targets an existing open RECEIPT and supplies `line` using the existing
+receipt-line shape, with optional boolean `reconcile`. Receiving remains responsible
+for actual unit creation and receipt-local reconciliation. The queued capture time
+is stored separately; it never rewrites the receipt's physical received_at claim.
+
+ATTACH_EVIDENCE supplies an already uploaded `attachment_id` and `link_role`; its
+envelope identifies the supported evidence target. Existing storage bytes, purpose,
+tenant and attribution checks still apply. RESOLVE targets EXCEPTION and supplies
+`expected_status` plus a nonblank `note`. Both ignore Asset expected_version; they
+retain their own validation and authority requirements. Sync conflicts use immutable
+observations and ordered immutable status events, surfaced through the existing
+Exception read/list/event routes alongside receiving exceptions.
+
+`GET /resolve/{uuid}` returns an entity type and explicit safe summary for opaque
+domain UUIDs. Unknown/cross-tenant UUIDs return 404; ambiguous administrative UUID
+collisions return 409. Natural serial strings are not lookup keys. Credential records
+and storage paths are never summaries.
+
+Invalid operation payloads produce durable bounded rejections while neighbors commit
+independently. Scope/credential/epoch failures that prevent durable admission return
+OPERATION_UNAVAILABLE with no record time. Credential expiry between operations returns
+401; earlier committed outcomes remain durable and are recovered by replay after login.
+DUPLICATE is response-only; PENDING_GOVERNANCE and quantity workflows remain non-producing.
+The PWA client is Slice 14. Downgrade over accepted capture records is refused.

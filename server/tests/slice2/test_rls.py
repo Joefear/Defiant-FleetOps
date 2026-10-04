@@ -1,8 +1,8 @@
 """USING visibility and WITH CHECK admission are distinct PostgreSQL contracts (ADR-002)."""
 
 import pytest
-from conftest import TABLES, row_snapshot
 from server.tests.auth_context import set_authenticated
+from server.tests.slice2.conftest import TABLES, row_snapshot
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7

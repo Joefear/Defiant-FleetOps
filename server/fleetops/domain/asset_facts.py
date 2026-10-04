@@ -50,7 +50,15 @@ def _apply(connection: Connection, asset_id: UUID, statement, values: dict):
     """The database owns lock/admission/Actor checks; the request transaction owns commit."""
     with _constraints():
         return (
-            connection.execute(statement, dict(values, asset_id=asset_id, history_id=uuid7()))
+            connection.execute(
+                statement,
+                dict(
+                    values,
+                    asset_id=asset_id,
+                    history_id=uuid7(),
+                    client_op_id=values.get("client_op_id"),
+                ),
+            )
             .mappings()
             .one()
         )
@@ -64,7 +72,7 @@ def move_asset(connection: Connection, asset_id: UUID, *, values: dict):
         text("""
         SELECT * FROM fleetops.move_asset(
             :asset_id, :expected_version, :to_location_id, :reason,
-            :occurred_at, NULL, :history_id)
+            :occurred_at, :client_op_id, :history_id)
     """),
         values,
     )

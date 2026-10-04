@@ -1,13 +1,14 @@
 """Explicit procurement, receipt and Exception verbs reuse authenticated transactions."""
 
 from collections.abc import Callable, Iterator
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, text
 
 from fleetops.api.assets import asset_errors
+from fleetops.api.capture_schemas import SyncConflictOut
 from fleetops.api.context import RequestContext
 from fleetops.api.procurement import procurement_errors
 from fleetops.api.receiving import receiving_errors
@@ -29,7 +30,6 @@ from fleetops.db.metadata import (
     receipt_lines,
 )
 from fleetops.domain import exception_workflow, procurement, receiving, record_corrections
-from fleetops.domain.exception_types import ExceptionEntityType
 
 
 def create_record_correction_router(authenticated: Callable[..., Iterator[RequestContext]]):
@@ -101,14 +101,14 @@ def create_record_correction_router(authenticated: Callable[..., Iterator[Reques
                 context.connection, exception_id, values=body.model_dump()
             )
 
-    @router.get("/exceptions/open", response_model=list[ExceptionOut])
+    @router.get("/exceptions/open", response_model=list[ExceptionOut | SyncConflictOut])
     def open_exceptions(
         context: Context,
         receipt_id: UUID | None = None,
         receipt_line_id: UUID | None = None,
         po_line_id: UUID | None = None,
         asset_id: UUID | None = None,
-        entity_type: ExceptionEntityType | None = None,
+        entity_type: Literal["RECEIPT", "RECEIPT_LINE", "ASSET"] | None = None,
         entity_id: UUID | None = None,
     ):
         """Find unresolved observations by explicit tenant-safe typed relationships."""
@@ -123,7 +123,7 @@ def create_record_correction_router(authenticated: Callable[..., Iterator[Reques
                 entity_id=entity_id,
             )
 
-    @router.get("/exceptions/{exception_id}", response_model=ExceptionOut)
+    @router.get("/exceptions/{exception_id}", response_model=ExceptionOut | SyncConflictOut)
     def exception(exception_id: UUID, context: Context):
         """Expose immutable observation alongside status projection and event history."""
         with asset_errors():

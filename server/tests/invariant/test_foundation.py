@@ -1,6 +1,6 @@
 """Invariants every later slice inherits: PostgreSQL 16, two unprivileged roles, empty baseline."""
 
-from conftest import assert_migration_succeeded, user_relations
+from server.tests.conftest import assert_migration_succeeded, user_relations
 
 from fleetops.db.grants import grant_immutable_history
 

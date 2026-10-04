@@ -4,7 +4,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import TABLES, row_snapshot
+from server.tests.slice2.conftest import TABLES, row_snapshot
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 

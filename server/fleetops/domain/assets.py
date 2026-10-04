@@ -164,12 +164,13 @@ def transition_asset(connection: Connection, asset_id: UUID, *, values: dict, st
                 text("""
             SELECT * FROM fleetops.transition_asset(
                 :asset_id, :expected_version, :from_state, :to_state, :reason,
-                :occurred_at, :evidence_ref, NULL, :transition_id)
+                :occurred_at, :evidence_ref, :client_op_id, :transition_id)
         """),
                 dict(
                     values,
                     asset_id=asset_id,
                     transition_id=uuid7(),
+                    client_op_id=values.get("client_op_id"),
                     evidence_ref=values.get("evidence_ref"),
                 ),
             )

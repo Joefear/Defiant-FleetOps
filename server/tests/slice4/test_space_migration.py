@@ -163,6 +163,10 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "attachment_links",
         "label_templates",
         "print_jobs",
+        "capture_streams",
+        "capture_operations",
+        "sync_conflicts",
+        "sync_conflict_events",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -173,6 +177,7 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "assert_asset_correction_authority",
             "assert_receipt_correction_complete",
             "assign_asset",
+            "capture_asset_facts",
             "change_custody",
             "change_ownership",
             "check_asset_assignment_events_pairs",
@@ -199,6 +204,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "enforce_receiving_exception",
             "enforce_receiving_record",
             "guard_asset_evidence",
+            "guard_capture_record",
+            "guard_capture_stream",
             "guard_evidence_capture",
             "guard_exception_workflow_identity",
             "guard_label_template",
@@ -206,6 +213,9 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "guard_purchase_order_line_corrections",
             "guard_receipt_evaluation",
             "guard_receipt_line_corrections",
+            "guard_sync_conflict",
+            "guard_sync_conflict_event",
+            "guard_sync_conflict_origin",
             "initialize_exception_workflow",
             "issue_session",
             "lock_receiving_context",

@@ -17,9 +17,14 @@ def assign_asset(connection: Connection, asset_id: UUID, *, values: dict):
                 text("""
             SELECT * FROM fleetops.assign_asset(
                 :asset_id, :expected_version, :assignee_type, :assignee_id,
-                :reason, :occurred_at, NULL, :event_id)
+                :reason, :occurred_at, :client_op_id, :event_id)
         """),
-                dict(values, asset_id=asset_id, event_id=uuid7()),
+                dict(
+                    values,
+                    asset_id=asset_id,
+                    event_id=uuid7(),
+                    client_op_id=values.get("client_op_id"),
+                ),
             )
             .mappings()
             .one()
@@ -33,9 +38,14 @@ def unassign_asset(connection: Connection, asset_id: UUID, *, values: dict):
             connection.execute(
                 text("""
             SELECT * FROM fleetops.unassign_asset(
-                :asset_id, :expected_version, :reason, :occurred_at, NULL, :event_id)
+                :asset_id, :expected_version, :reason, :occurred_at, :client_op_id, :event_id)
         """),
-                dict(values, asset_id=asset_id, event_id=uuid7()),
+                dict(
+                    values,
+                    asset_id=asset_id,
+                    event_id=uuid7(),
+                    client_op_id=values.get("client_op_id"),
+                ),
             )
             .mappings()
             .one()

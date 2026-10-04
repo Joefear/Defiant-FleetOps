@@ -1,1 +1,1 @@
-"""Reserved for a later implementation slice."""
+"""Authenticated queued operations, idempotency and visible offline conflicts."""

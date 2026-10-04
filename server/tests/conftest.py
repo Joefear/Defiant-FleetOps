@@ -48,6 +48,7 @@ class Database:
     historical_0010: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0011: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0012: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0013: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -219,6 +220,9 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0012_evidence"))
             with snapshot_engine.connect() as connection:
                 db.historical_0012.update(schema_snapshot(connection))
+            assert_migration_succeeded(db.migrate("upgrade", "0013_labels"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0013.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -236,6 +240,10 @@ def disposable_database():
                             "attachment_links",
                             "label_templates",
                             "print_jobs",
+                            "capture_streams",
+                            "capture_operations",
+                            "sync_conflicts",
+                            "sync_conflict_events",
                             "alembic_version",
                             "asset_assignment_events",
                             "asset_configurations",
@@ -309,6 +317,12 @@ def disposable_database():
                         ("guard_asset_evidence",),
                         ("guard_label_template",),
                         ("guard_print_job",),
+                        ("capture_asset_facts",),
+                        ("guard_sync_conflict_origin",),
+                        ("guard_capture_stream",),
+                        ("guard_capture_record",),
+                        ("guard_sync_conflict",),
+                        ("guard_sync_conflict_event",),
                         ("normalize_correction_reason",),
                         ("assign_asset",),
                         ("change_custody",),
