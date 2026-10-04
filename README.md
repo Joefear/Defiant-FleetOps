@@ -1,6 +1,8 @@
 # Defiant FleetOps
 
-Slice 11 adds immutable, content-addressed evidence, typed links, supersession,
+Slice 12 adds UUID-only CODE128/Data Matrix labels, immutable templates, durable
+print jobs and isolated PNG/PDF/ZPL file adapters. Slice 11 adds immutable,
+content-addressed evidence, typed links, supersession,
 and evidence-backed configuration and retirement. Slice 10 supplies typed correction pairs,
 effective history, correction generations,
 and append-only Exception workflow under ADR-013. Receiving retains immutable
@@ -81,8 +83,8 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head is `0012_evidence` and includes the
-Slice 2 through Slice 11 tables described below.
+bookkeeping table is empty. Head is `0013_labels` and includes the
+Slice 2 through Slice 12 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -1060,3 +1062,48 @@ an empty-evidence downgrade and refuses to discard accepted evidence.
 .\.venv\Scripts\python.exe -m pytest -v server/tests/slice11 --basetemp=.pytest_cache/slice11-check
 .\.venv\Scripts\python.exe -m server.tests.slice11.probe_evidence
 ```
+
+## Slice 12 — Labels and machine-readable identity
+
+Revision `0013_labels` follows `0012_evidence`. Templates and print jobs are tenant
+scoped. Templates accept CODE128 or DATAMATRIX; the barcode payload is always the
+canonical Asset UUID string. It contains no URL, asset tag, serial, part number or
+location. The fixed `barcode_field: "id"` cannot select a different source.
+Visible fields may include `id`, `asset_tag`, `description` and `item_mpn`.
+
+Configure an absolute dedicated `FLEETOPS_LABEL_OUTPUT_ROOT` before dispatching.
+All outputs use server-generated organization/job UUIDs; requests never choose paths.
+The reference adapter produces PNG and lossless single-page PDF. The isolated printer
+adapter writes ZPL raster text to a file. This slice opens no printer/network socket.
+
+Authenticated workflow:
+
+1. `POST /label-templates` creates an immutable template with `name`,
+   `human_fields`, `symbology`, optional `entity_type: "ASSET"` and fixed
+   `barcode_field: "id"`.
+2. `POST /assets/{uuid}/labels` queues a label with `template_id` and
+   `output_format` (PNG, PDF or ZPL). `POST /receipts/{uuid}/labels` queues the
+   actual serialized Assets in that receipt, with a limit of 500 per batch.
+   Ordered, missing and nonserialized quantities never manufacture labels.
+3. `POST /print-jobs/{uuid}/dispatch` generates a committed request's output.
+4. `GET /print-jobs/{uuid}` reads status; `GET /print-jobs/{uuid}/content`
+   downloads verified output bytes.
+
+Queueing commits PENDING before any artifact is dispatched. Each immutable request
+snapshots the template and actual descriptive fields; a later tag/description change
+does not rewrite an earlier print request. Dispatch locks the same job row so concurrent
+dispatches share one delivery result. Atomic no-overwrite file publication and stable PDF
+metadata let a rolled-back delivery retry reuse complete output bytes. Printing does
+not change the Asset version or lifecycle history.
+
+SUCCEEDED means the output artifact was generated, not that a physical printer
+printed it. Missing configuration or bounded output failure records FAILED, a safe
+error code and authenticated delivery attribution; a later dispatch retries it.
+Each download verifies actual bytes against the successful job's hash. Corruption
+fails closed. New print requests are new jobs; successful jobs are not rewritten.
+
+The output directory is trusted administrator-owned storage. Reparse points are
+rejected; privileged host mutation remains outside that boundary. No output-retention
+deletion policy or physical-printer exactly-once guarantee is introduced. A downgrade
+over accepted templates or print jobs is refused. Offline capture and the PWA remain
+later slices.

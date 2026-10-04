@@ -47,6 +47,7 @@ class Database:
     historical_0009: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0010: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0011: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0012: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -214,6 +215,10 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0011_corrections"))
             with snapshot_engine.connect() as connection:
                 db.historical_0011.update(schema_snapshot(connection))
+            # Capture evidence before any label tables or status triggers exist.
+            assert_migration_succeeded(db.migrate("upgrade", "0012_evidence"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0012.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -229,6 +234,8 @@ def disposable_database():
                             "actors",
                             "attachments",
                             "attachment_links",
+                            "label_templates",
+                            "print_jobs",
                             "alembic_version",
                             "asset_assignment_events",
                             "asset_configurations",
@@ -300,6 +307,8 @@ def disposable_database():
                         ("valid_asset_evidence",),
                         ("guard_evidence_capture",),
                         ("guard_asset_evidence",),
+                        ("guard_label_template",),
+                        ("guard_print_job",),
                         ("normalize_correction_reason",),
                         ("assign_asset",),
                         ("change_custody",),

@@ -19,12 +19,14 @@ iniconfig==2.3.0
 Mako==1.4.1
 MarkupSafe==3.0.3
 packaging==26.3
+Pillow==12.3.0
 pluggy==1.6.0
 psycopg-binary==3.2.10
 psycopg==3.2.10
 pycparser==3.0
 pydantic_core==2.33.2
 pydantic==2.11.7
+pypdfium2==5.13.0
 Pygments==2.21.0
 pytest==8.4.2
 ruff==0.12.11
@@ -36,3 +38,4 @@ typing-inspection==0.4.4
 tzdata==2026.3
 uuid6==2025.0.1
 uvicorn==0.52.4
+zxing-cpp==3.1.1

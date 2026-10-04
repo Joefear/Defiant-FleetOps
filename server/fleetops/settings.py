@@ -16,6 +16,7 @@ class Settings:
     session_seconds: int = 43200
     evidence_root: Path | None = None
     evidence_upload_limit: int = 16 * 1024 * 1024
+    label_output_root: Path | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -35,6 +36,9 @@ class Settings:
         if not 1 <= self.evidence_upload_limit <= 1024 * 1024 * 1024:
             raise ValueError("Evidence upload limit must be between 1 byte and 1 GiB")
 
+        if self.label_output_root is not None and not self.label_output_root.is_absolute():
+            raise ValueError("Label output root must be absolute")
+
     @classmethod
     def from_environment(cls) -> "Settings":
         """Missing trusted configuration is an error, never a fallback to the seeded org."""
@@ -47,4 +51,7 @@ class Settings:
             if os.environ.get("FLEETOPS_EVIDENCE_ROOT")
             else None,
             evidence_upload_limit=int(os.environ.get("FLEETOPS_EVIDENCE_UPLOAD_LIMIT", "16777216")),
+            label_output_root=Path(os.environ["FLEETOPS_LABEL_OUTPUT_ROOT"])
+            if os.environ.get("FLEETOPS_LABEL_OUTPUT_ROOT")
+            else None,
         )

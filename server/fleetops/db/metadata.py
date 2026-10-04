@@ -29,6 +29,7 @@ from sqlalchemy import (
 )
 
 from fleetops.db.evidence_schema import define_evidence_tables
+from fleetops.db.label_schema import define_label_tables
 from fleetops.db.receiving_schema import define_receiving_tables
 from fleetops.domain.actor_types import ActorType
 from fleetops.domain.identifier_types import IdentifierType
@@ -1268,6 +1269,7 @@ receipt_comparators.append_constraint(
 )
 
 attachments, attachment_links = define_evidence_tables(metadata)
+label_templates, print_jobs = define_label_tables(metadata)
 for evidence_table in (asset_transitions, asset_configurations):
     Index(
         f"ix_{evidence_table.name}_evidence",

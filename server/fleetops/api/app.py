@@ -14,6 +14,7 @@ from fleetops.api.assets import create_asset_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
 from fleetops.api.evidence import create_evidence_router
+from fleetops.api.labels import create_label_router
 from fleetops.api.procurement import create_procurement_router
 from fleetops.api.receiving import create_receiving_router
 from fleetops.api.schemas import (
@@ -174,4 +175,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(
         create_evidence_router(authenticated, upload_limit=settings.evidence_upload_limit)
     )
+    app.include_router(create_label_router(authenticated, output_root=settings.label_output_root))
     return app

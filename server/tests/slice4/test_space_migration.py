@@ -161,6 +161,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "exception_events",
         "attachments",
         "attachment_links",
+        "label_templates",
+        "print_jobs",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -199,6 +201,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "guard_asset_evidence",
             "guard_evidence_capture",
             "guard_exception_workflow_identity",
+            "guard_label_template",
+            "guard_print_job",
             "guard_purchase_order_line_corrections",
             "guard_receipt_evaluation",
             "guard_receipt_line_corrections",
