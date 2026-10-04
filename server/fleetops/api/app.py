@@ -13,6 +13,7 @@ from uuid6 import uuid7
 from fleetops.api.assets import create_asset_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
+from fleetops.api.evidence import create_evidence_router
 from fleetops.api.procurement import create_procurement_router
 from fleetops.api.receiving import create_receiving_router
 from fleetops.api.schemas import (
@@ -34,6 +35,7 @@ from fleetops.db.metadata import actors
 from fleetops.db.session import create_authenticator_engine, create_runtime_engine
 from fleetops.db.tenancy import set_credential_context, set_organization
 from fleetops.domain.identity import create_actor, create_party, list_parties
+from fleetops.evidence.storage import FilesystemEvidenceStorage
 from fleetops.settings import Settings
 
 bearer = HTTPBearer(auto_error=False)
@@ -52,6 +54,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_environment()
     engine = create_runtime_engine(settings)
     authenticator_engine = create_authenticator_engine(settings)
+    evidence_storage = (
+        FilesystemEvidenceStorage(settings.evidence_root)
+        if settings.evidence_root is not None
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -84,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             set_organization(connection, identity.organization_id)
             set_credential_context(connection, identity.token_digest)
             response.headers["Cache-Control"] = "no-store"
-            yield RequestContext(connection, identity)
+            yield RequestContext(connection, identity, evidence_storage)
 
     Context = Annotated[RequestContext, Depends(authenticated)]
 
@@ -164,4 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_record_correction_router(authenticated))
     app.include_router(create_procurement_router(authenticated))
     app.include_router(create_receiving_router(authenticated))
+    app.include_router(
+        create_evidence_router(authenticated, upload_limit=settings.evidence_upload_limit)
+    )
     return app

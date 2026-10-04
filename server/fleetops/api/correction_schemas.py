@@ -30,6 +30,7 @@ class TransitionCorrection(AssetCorrection):
     """Pre-root source is derived; the caller supplies only the replacement destination."""
 
     to_state: AssetState
+    evidence_ref: UUID | None = None
 
 
 class MovementCorrection(AssetCorrection):

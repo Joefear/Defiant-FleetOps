@@ -159,6 +159,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "receipt_evaluation_exceptions",
         "exception_workflows",
         "exception_events",
+        "attachments",
+        "attachment_links",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -194,6 +196,8 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "enforce_receiving_completeness",
             "enforce_receiving_exception",
             "enforce_receiving_record",
+            "guard_asset_evidence",
+            "guard_evidence_capture",
             "guard_exception_workflow_identity",
             "guard_purchase_order_line_corrections",
             "guard_receipt_evaluation",
@@ -208,6 +212,7 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "transition_asset",
             "transition_exception",
             "unassign_asset",
+            "valid_asset_evidence",
         )
     ]
     for table in (facilities, locations):

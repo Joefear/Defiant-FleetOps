@@ -8,6 +8,7 @@ from uuid6 import uuid7
 from fleetops.db.metadata import asset_transitions, assets
 from fleetops.domain.assets import AssetConflict, AssetInvalid, AssetNotFound, _constraints
 from fleetops.domain.lifecycle import AssetState, LifecycleInvalid, validate_edge
+from fleetops.evidence.service import verify_asset_evidence
 
 
 def _correct(connection, asset_id, root_id, values, statement):
@@ -95,7 +96,9 @@ def correct_assignment(connection: Connection, asset_id: UUID, root_id: UUID, *,
     )
 
 
-def correct_transition(connection: Connection, asset_id: UUID, root_id: UUID, *, values: dict):
+def correct_transition(
+    connection: Connection, asset_id: UUID, root_id: UUID, *, values: dict, storage=None
+):
     """Validate Python's graph using effective pre-root authority under the shared lock.
 
     ON_HOLD remembers the effective entry edge. The same lock remains held through
@@ -141,17 +144,25 @@ def correct_transition(connection: Connection, asset_id: UUID, root_id: UUID, *,
     validate_edge(
         AssetState(prior["to_state"]), values["to_state"], previous_state=prior["from_state"]
     )
-    if values["to_state"] == AssetState.RETIRED:
+    if values["to_state"] == AssetState.RETIRED and values.get("evidence_ref") is None:
         raise LifecycleInvalid("Retirement requires verifiable disposal evidence")
+    verify_asset_evidence(
+        connection,
+        storage,
+        asset_id,
+        values.get("evidence_ref"),
+        role="DISPOSAL_EVIDENCE" if values["to_state"] == AssetState.RETIRED else None,
+        required=values["to_state"] == AssetState.RETIRED,
+    )
     return _correct(
         connection,
         asset_id,
         root_id,
-        values,
+        dict(values, evidence_ref=values.get("evidence_ref")),
         """
       SELECT * FROM fleetops.correct_transition(:asset_id,:root_id,:expected_version,
         :to_state,:reason,:correction_occurred_at,:occurred_at,
-        :pair_id,:reversal_id,:corrected_id)
+        :pair_id,:reversal_id,:corrected_id,:evidence_ref)
     """,
     )
 
@@ -221,7 +232,9 @@ def lifecycle_correction_issues(connection: Connection, *, asset_id=None):
     """
     rows = connection.execute(
         text("""
-      SELECT c.org_id,c.asset_id,c.to_state,p.from_state AS previous_state,p.to_state AS from_state
+      SELECT c.org_id,c.asset_id,c.to_state,p.from_state AS previous_state,p.to_state AS from_state,
+        fleetops.valid_asset_evidence(c.org_id,c.evidence_ref,c.asset_id,'DISPOSAL_EVIDENCE')
+          AS disposal_valid
       FROM fleetops.asset_transitions c
       JOIN fleetops.asset_transitions r ON r.org_id=c.org_id AND r.asset_id=c.asset_id
         AND r.id=c.corrects_transition_id
@@ -238,7 +251,9 @@ def lifecycle_correction_issues(connection: Connection, *, asset_id=None):
     invalid = {}
     for row in rows:
         try:
-            if row["from_state"] is None or row["to_state"] == AssetState.RETIRED:
+            if row["from_state"] is None or (
+                row["to_state"] == AssetState.RETIRED and not row["disposal_valid"]
+            ):
                 raise LifecycleInvalid("Missing pre-root state or unsupported evidence")
             validate_edge(
                 AssetState(row["from_state"]), row["to_state"], previous_state=row["previous_state"]

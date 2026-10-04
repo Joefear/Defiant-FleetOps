@@ -13,6 +13,7 @@ from uuid6 import uuid7
 
 from fleetops.db.metadata import asset_identifiers, asset_transitions, assets
 from fleetops.domain.lifecycle import AssetState, LifecycleInvalid, validate_edge
+from fleetops.evidence.service import verify_asset_evidence
 
 
 class AssetNotFound(Exception):
@@ -115,7 +116,7 @@ def list_transitions(connection: Connection, asset_id: UUID):
     return audit_rows(rows, "corrects_transition_id")
 
 
-def transition_asset(connection: Connection, asset_id: UUID, *, values: dict):
+def transition_asset(connection: Connection, asset_id: UUID, *, values: dict, storage=None):
     """Check Python-owned legality, then invoke the atomic privileged history boundary.
 
     ON_HOLD is dynamic: hold the same Asset row lock while reading its latest entry
@@ -127,8 +128,16 @@ def transition_asset(connection: Connection, asset_id: UUID, *, values: dict):
     if from_state != AssetState.ON_HOLD:
         validate_edge(from_state, to_state)
     # D17 / ADR-004: a legal graph edge cannot substitute for disposal evidence.
-    if to_state == AssetState.RETIRED:
+    if to_state == AssetState.RETIRED and values.get("evidence_ref") is None:
         raise LifecycleInvalid("Retirement requires verifiable disposal evidence")
+    verify_asset_evidence(
+        connection,
+        storage,
+        asset_id,
+        values.get("evidence_ref"),
+        role="DISPOSAL_EVIDENCE" if to_state == AssetState.RETIRED else None,
+        required=to_state == AssetState.RETIRED,
+    )
     if from_state == AssetState.ON_HOLD:
         target = connection.execute(
             select(assets.c.id).where(assets.c.id == asset_id).with_for_update()
@@ -155,9 +164,14 @@ def transition_asset(connection: Connection, asset_id: UUID, *, values: dict):
                 text("""
             SELECT * FROM fleetops.transition_asset(
                 :asset_id, :expected_version, :from_state, :to_state, :reason,
-                :occurred_at, NULL, NULL, :transition_id)
+                :occurred_at, :evidence_ref, NULL, :transition_id)
         """),
-                dict(values, asset_id=asset_id, transition_id=uuid7()),
+                dict(
+                    values,
+                    asset_id=asset_id,
+                    transition_id=uuid7(),
+                    evidence_ref=values.get("evidence_ref"),
+                ),
             )
             .mappings()
             .one()

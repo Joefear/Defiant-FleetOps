@@ -64,6 +64,13 @@ def test_asset_api_rejects_caller_authority(path, fields, forbidden, asset_data,
         json=json_data(body),
     )
     assert response.status_code == 422, response.text
+    if path == "transitions" and forbidden == "evidence_ref":
+        # Slice 11 opens only the typed evidence seam, not arbitrary authority.
+        assert any(
+            error["type"] == "uuid_parsing" and error["loc"][-1] == forbidden
+            for error in response.json()["detail"]
+        )
+        return
     assert any(
         error["type"] == "extra_forbidden" and error["loc"][-1] == forbidden
         for error in response.json()["detail"]

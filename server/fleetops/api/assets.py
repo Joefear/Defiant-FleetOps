@@ -30,6 +30,7 @@ from fleetops.api.assignment_schemas import (
     ConfigurationRequest,
 )
 from fleetops.api.context import RequestContext
+from fleetops.api.evidence import evidence_errors
 from fleetops.domain import asset_facts, assets, assignments, configurations
 from fleetops.domain.lifecycle import LifecycleInvalid
 
@@ -38,7 +39,8 @@ from fleetops.domain.lifecycle import LifecycleInvalid
 def asset_errors():
     """Expose stable failures while the shared request dependency rolls back all writes."""
     try:
-        yield
+        with evidence_errors():
+            yield
     except assets.AssetNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except assets.AssetConflict as error:
@@ -94,6 +96,7 @@ def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) 
                 context.connection,
                 asset_id,
                 values=body.model_dump(),
+                storage=context.evidence_storage,
             )
 
     @router.post("/assets/{asset_id}/movements", response_model=MovementOut, status_code=201)
@@ -173,6 +176,7 @@ def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) 
                 asset_id,
                 org_id=context.identity.organization_id,
                 values=body.model_dump(),
+                storage=context.evidence_storage,
             )
 
     @router.get("/assets/{asset_id}/configurations", response_model=list[ConfigurationOut])

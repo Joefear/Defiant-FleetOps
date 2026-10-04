@@ -46,6 +46,7 @@ class Database:
     historical_0008: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0009: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0010: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0011: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -210,6 +211,9 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0010_receiving"))
             with snapshot_engine.connect() as connection:
                 db.historical_0010.update(schema_snapshot(connection))
+            assert_migration_succeeded(db.migrate("upgrade", "0011_corrections"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0011.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -223,6 +227,8 @@ def disposable_database():
                         ("fleetops", name, "r")
                         for name in (
                             "actors",
+                            "attachments",
+                            "attachment_links",
                             "alembic_version",
                             "asset_assignment_events",
                             "asset_configurations",
@@ -291,6 +297,9 @@ def disposable_database():
                 ).all() == sorted(
                     [
                         ("assert_asset_correction_authority",),
+                        ("valid_asset_evidence",),
+                        ("guard_evidence_capture",),
+                        ("guard_asset_evidence",),
                         ("normalize_correction_reason",),
                         ("assign_asset",),
                         ("change_custody",),

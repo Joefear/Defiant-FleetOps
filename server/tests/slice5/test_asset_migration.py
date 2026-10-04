@@ -114,6 +114,8 @@ def test_asset_schema_contains_only_authorized_objects_and_text_states(migrator_
         "exception_workflows",
         "exception_events",
         "receipt_evaluation_exceptions",
+        "attachments",
+        "attachment_links",
     }
     assert (
         connection.exec_driver_sql(

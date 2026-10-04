@@ -40,6 +40,7 @@ class TransitionRequest(InputModel):
     to_state: AssetState
     reason: Description
     occurred_at: AwareDatetime
+    evidence_ref: UUID | None = None
 
 
 class AssetOut(BaseModel):

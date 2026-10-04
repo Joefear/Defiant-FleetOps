@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import Connection
 
 from fleetops.auth import AuthenticatedIdentity
+from fleetops.evidence.storage import EvidenceStorage
 
 
 @dataclass(frozen=True)
@@ -13,3 +14,4 @@ class RequestContext:
 
     connection: Connection
     identity: AuthenticatedIdentity
+    evidence_storage: EvidenceStorage | None = None

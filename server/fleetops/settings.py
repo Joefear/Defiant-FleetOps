@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.engine import URL, make_url
@@ -13,6 +14,8 @@ class Settings:
     organization_id: UUID
     authenticator_url: URL = field(repr=False)
     session_seconds: int = 43200
+    evidence_root: Path | None = None
+    evidence_upload_limit: int = 16 * 1024 * 1024
 
     def __post_init__(self) -> None:
         if (
@@ -27,6 +30,10 @@ class Settings:
             raise ValueError("Login requires separate fleetops_authenticator credentials")
         if not 1 <= self.session_seconds <= 86400:
             raise ValueError("Session lifetime must be between 1 second and 24 hours")
+        if self.evidence_root is not None and not self.evidence_root.is_absolute():
+            raise ValueError("Evidence storage root must be absolute")
+        if not 1 <= self.evidence_upload_limit <= 1024 * 1024 * 1024:
+            raise ValueError("Evidence upload limit must be between 1 byte and 1 GiB")
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -36,4 +43,8 @@ class Settings:
             organization_id=UUID(os.environ["FLEETOPS_ORG_ID"]),
             authenticator_url=make_url(os.environ["FLEETOPS_AUTHENTICATOR_URL"]),
             session_seconds=int(os.environ.get("FLEETOPS_SESSION_SECONDS", "43200")),
+            evidence_root=Path(os.environ["FLEETOPS_EVIDENCE_ROOT"])
+            if os.environ.get("FLEETOPS_EVIDENCE_ROOT")
+            else None,
+            evidence_upload_limit=int(os.environ.get("FLEETOPS_EVIDENCE_UPLOAD_LIMIT", "16777216")),
         )

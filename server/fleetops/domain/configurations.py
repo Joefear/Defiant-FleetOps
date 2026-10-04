@@ -7,15 +7,21 @@ from uuid6 import uuid7
 
 from fleetops.db.metadata import asset_configurations
 from fleetops.domain.assets import _constraints, get_asset
+from fleetops.evidence.service import verify_asset_evidence
 
 
-def append_configuration(connection: Connection, asset_id: UUID, *, org_id: UUID, values: dict):
+def append_configuration(
+    connection: Connection, asset_id: UUID, *, org_id: UUID, values: dict, storage=None
+):
     """Column grants force Actor, recording time and sequence to their database defaults.
 
     The organization comes from authenticated request context, never from request JSON.
     No Asset row lock/version precondition or unnecessary elevated function is involved.
     """
     get_asset(connection, asset_id)
+    verify_asset_evidence(
+        connection, storage, asset_id, values.get("evidence_ref"), role="CONFIG_EVIDENCE"
+    )
     with _constraints():
         return (
             connection.execute(

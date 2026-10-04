@@ -22,7 +22,7 @@ def round_trip(database, connection, *, historical=None):
             assert predecessor == historical
         assert role_snapshot(connection) == roles
         assert sequence_snapshot(connection) == sequence
-        migrate(database, "upgrade", "0011_corrections")
+        migrate(database, "upgrade", "head")
         assert schema_snapshot(connection) == head
         migrate(database, "check")
         migrate(database, "downgrade", "0010_receiving")

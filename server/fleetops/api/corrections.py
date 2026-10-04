@@ -34,7 +34,11 @@ def create_correction_router(authenticated: Callable[..., Iterator[RequestContex
         """Correct an ordinary lifecycle edge using its effective pre-root state."""
         with asset_errors():
             return corrections.correct_transition(
-                context.connection, asset_id, root_id, values=body.model_dump()
+                context.connection,
+                asset_id,
+                root_id,
+                values=body.model_dump(),
+                storage=context.evidence_storage,
             )
 
     @router.post(

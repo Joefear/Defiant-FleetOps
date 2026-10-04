@@ -28,6 +28,7 @@ from sqlalchemy import (
     text,
 )
 
+from fleetops.db.evidence_schema import define_evidence_tables
 from fleetops.db.receiving_schema import define_receiving_tables
 from fleetops.domain.actor_types import ActorType
 from fleetops.domain.identifier_types import IdentifierType
@@ -636,8 +637,13 @@ asset_transitions = Table(
         name="ck_asset_transitions_initial",
     ),
     CheckConstraint("length(btrim(reason)) BETWEEN 1 AND 4000", name="ck_asset_transitions_reason"),
-    # ADR-004: the interface exists now; evidence cannot be verified until Slice 11.
-    CheckConstraint("evidence_ref IS NULL", name="ck_asset_transitions_evidence_unavailable"),
+    # D17 / ADR-004: evidence identity is tenant-safe; the INSERT trigger also
+    # verifies capture provenance and the link to this Asset's disposal/configuration.
+    ForeignKeyConstraint(
+        ["org_id", "evidence_ref"],
+        ["fleetops.attachments.org_id", "fleetops.attachments.id"],
+        name="fk_asset_transitions_evidence",
+    ),
 )
 for table, columns in (
     (
@@ -950,7 +956,11 @@ asset_configurations = Table(
         ["fleetops.actors.org_id", "fleetops.actors.id"],
         name="fk_asset_configurations_actor",
     ),
-    CheckConstraint("evidence_ref IS NULL", name="ck_asset_configurations_evidence_unavailable"),
+    ForeignKeyConstraint(
+        ["org_id", "evidence_ref"],
+        ["fleetops.attachments.org_id", "fleetops.attachments.id"],
+        name="fk_asset_configurations_evidence",
+    ),
     CheckConstraint("configuration_seq > 0", name="ck_asset_configurations_seq"),
     CheckConstraint("length(notes) <= 4000", name="ck_asset_configurations_notes"),
 )
@@ -1256,3 +1266,11 @@ receipt_comparators.append_constraint(
         initially="DEFERRED",
     )
 )
+
+attachments, attachment_links = define_evidence_tables(metadata)
+for evidence_table in (asset_transitions, asset_configurations):
+    Index(
+        f"ix_{evidence_table.name}_evidence",
+        evidence_table.c.org_id,
+        evidence_table.c.evidence_ref,
+    )

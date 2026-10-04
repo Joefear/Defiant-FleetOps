@@ -99,6 +99,11 @@ def test_strict_requests_reject_every_authority_field(
             headers=headers(a),
             json=body(a, route, **{field: str(other_human.actor_id)}),
         )
+        if route == "configurations" and field == "evidence_ref":
+            # Slice 11 accepts verified evidence identity; another Actor's UUID
+            # remains nonexistent evidence and cannot authorize a configuration.
+            assert response.status_code == 404, response.text
+            continue
         assert response.status_code == 422, (field, response.text)
         assert any(e["type"] == "extra_forbidden" for e in response.json()["detail"])
     assert assignment_snapshot(a) == before

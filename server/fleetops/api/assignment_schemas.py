@@ -68,13 +68,14 @@ class AssignmentHistoryOut(BaseModel):
 
 
 class ConfigurationRequest(InputModel):
-    """Application time and configuration values only; no Actor, sequence or evidence selector."""
+    """Application facts and evidence identity; Actor and recording order remain server-owned."""
 
     image_name: Tag
     image_version: Tag
     config_profile: Tag
     notes: str = Field(default="", max_length=4000)
     applied_at: AwareDatetime
+    evidence_ref: UUID | None = None
 
 
 class ConfigurationOut(BaseModel):
