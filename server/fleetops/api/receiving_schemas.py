@@ -5,7 +5,15 @@ from decimal import Decimal
 from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, StrictBool, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictInt,
+    StringConstraints,
+    model_validator,
+)
 
 from fleetops.api.asset_schemas import Description, Tag
 from fleetops.api.schemas import InputModel
@@ -46,10 +54,18 @@ class ReceivedUnit(InputModel):
     identifier: ReceivedIdentifier
 
 
+class ComparatorBinding(InputModel):
+    """Pin a specifically acknowledged effective generation of an ordinary PO line."""
+
+    po_line_id: UUID
+    expected_generation: Annotated[StrictInt, Field(ge=0, le=2147483647)]
+
+
 class ReceiptLineCreate(InputModel):
     """One serialized unit or one nonserialized quantity observation, never an Asset selector."""
 
     po_line_id: UUID | None = None
+    expected_po_generation: Annotated[StrictInt, Field(ge=0, le=2147483647)] = 0
     item_id: UUID
     quantity: Quantity
     uom: UnitOfMeasure
@@ -68,15 +84,17 @@ class ReceiptCreate(InputModel):
     packing_reference: Reference | None = None
     received_at: AwareDatetime
     comparator_ids: list[UUID] = Field(default_factory=list)
+    comparator_bindings: list[ComparatorBinding] = Field(default_factory=list)
     lines: list[ReceiptLineCreate] = Field(default_factory=list)
     reconcile: StrictBool = True
 
     @model_validator(mode="after")
     def distinct_comparators(self) -> Self:
-        if len(self.comparator_ids) != len(set(self.comparator_ids)):
+        targets = self.comparator_ids + [binding.po_line_id for binding in self.comparator_bindings]
+        if len(targets) != len(set(targets)):
             raise ValueError("Comparator UUIDs must be distinct")
         if self.po_id is None and (
-            self.comparator_ids or any(line.po_line_id is not None for line in self.lines)
+            targets or any(line.po_line_id is not None for line in self.lines)
         ):
             raise ValueError("A comparator requires a receipt PO")
         if self.packing_reference is not None and not self.packing_reference.strip():
@@ -116,6 +134,7 @@ class ReceiptLineOut(ReceivingAttributionOut):
 class ReceivingExceptionOut(ReceivingAttributionOut):
     """Typed immutable relationships; conflicting Asset never means received identity."""
 
+    evaluation_id: UUID | None
     exception_type: ReceivingExceptionType
     receipt_id: UUID
     receipt_line_id: UUID | None

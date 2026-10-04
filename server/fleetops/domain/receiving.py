@@ -22,7 +22,6 @@ from fleetops.db.metadata import (
     receipts,
     receiving_exceptions,
 )
-from fleetops.db.metadata import purchase_order_lines as po_lines
 
 
 class ReceivingNotFound(Exception):
@@ -98,7 +97,10 @@ def _require_open(connection: Connection, receipt_id: UUID):
 
 def _comparator(connection: Connection, line_id: UUID):
     row = (
-        connection.execute(select(po_lines).where(po_lines.c.id == line_id))
+        connection.execute(
+            text("SELECT * FROM fleetops.effective_purchase_order_lines WHERE id=:id"),
+            {"id": line_id},
+        )
         .mappings()
         .one_or_none()
     )
@@ -107,7 +109,14 @@ def _comparator(connection: Connection, line_id: UUID):
     return row
 
 
-def _bind_comparator(connection: Connection, header, line_id: UUID):
+def _bind_comparator(
+    connection: Connection,
+    header,
+    line_id: UUID,
+    *,
+    expected_generation: int = 0,
+    correction_id: UUID | None = None,
+):
     """Preserve an exact selected version, including an expectation with no physical arrival."""
     if header["po_id"] is None:
         raise ReceivingInvalid("Comparator requires a receipt PO")
@@ -118,12 +127,30 @@ def _bind_comparator(connection: Connection, header, line_id: UUID):
         )
     ).scalar_one_or_none()
     if exists is None:
+        source = (
+            connection.execute(
+                text("""
+            SELECT id,correction_generation FROM fleetops.purchase_order_line_corrections
+            WHERE po_line_id=:line AND correction_role='CORRECTED'
+            ORDER BY correction_generation DESC LIMIT 1
+        """),
+                {"line": line_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        actual_generation = source["correction_generation"] if source else 0
+        if actual_generation != expected_generation:
+            raise ReceivingConflict("Expected procurement generation is stale")
         connection.execute(
             receipt_comparators.insert().values(
                 id=uuid7(),
                 org_id=header["org_id"],
                 receipt_id=header["id"],
                 po_line_id=line_id,
+                source_generation=expected_generation,
+                introduced_by_correction_id=correction_id,
+                source_id=source["id"] if source else None,
             )
         )
     # Insertion of each physical line revalidates active-leaf admission even when
@@ -191,7 +218,13 @@ def _line_exceptions(
 def _record_line(connection: Connection, header, values: dict):
     """Select known conflict before normal admission; never recover a failed normal insert."""
     if values["po_line_id"] is not None:
-        _bind_comparator(connection, header, values["po_line_id"])
+        _bind_comparator(
+            connection,
+            header,
+            values["po_line_id"],
+            expected_generation=values.get("expected_po_generation", 0),
+        )
+    values = {key: value for key, value in values.items() if key != "expected_po_generation"}
     item = (
         connection.execute(select(items).where(items.c.id == values["item_id"]))
         .mappings()
@@ -285,13 +318,12 @@ def _reconcile(connection: Connection, header):
     )
     targets = (
         connection.execute(
-            select(po_lines)
-            .join(
-                receipt_comparators,
-                (receipt_comparators.c.org_id == po_lines.c.org_id)
-                & (receipt_comparators.c.po_line_id == po_lines.c.id),
-            )
-            .where(receipt_comparators.c.receipt_id == header["id"])
+            text("""
+        SELECT p.* FROM fleetops.effective_purchase_order_lines p
+        JOIN fleetops.receipt_comparators c ON c.org_id=p.org_id AND c.po_line_id=p.id
+        WHERE c.receipt_id=:receipt
+    """),
+            {"receipt": header["id"]},
         )
         .mappings()
         .all()
@@ -336,7 +368,7 @@ def create_receipt(connection: Connection, *, org_id: UUID, values: dict):
         header_values = {
             key: value
             for key, value in values.items()
-            if key not in {"lines", "comparator_ids", "reconcile"}
+            if key not in {"lines", "comparator_ids", "comparator_bindings", "reconcile"}
         }
         header = dict(
             connection.execute(
@@ -353,6 +385,13 @@ def create_receipt(connection: Connection, *, org_id: UUID, values: dict):
         )
         for target in values["comparator_ids"]:
             _bind_comparator(connection, header, target)
+        for binding in values.get("comparator_bindings", []):
+            _bind_comparator(
+                connection,
+                header,
+                binding["po_line_id"],
+                expected_generation=binding["expected_generation"],
+            )
         for line in values["lines"]:
             _record_line(connection, header, line)
         if values["reconcile"]:

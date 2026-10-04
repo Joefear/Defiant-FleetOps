@@ -1,7 +1,7 @@
 """Strict Asset inputs exclude identity, tenant, performer and projection authority."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field, StrictInt, StringConstraints, model_validator
@@ -89,6 +89,12 @@ class TransitionOut(BaseModel):
     occurred_at: datetime
     recorded_at: datetime
     evidence_ref: UUID | None
+    cancels_history_id: UUID | None = None
+    correction_role: Literal["NONE", "REVERSAL", "CORRECTED"]
+    correction_pair_id: UUID | None
+    correction_generation: int
+    correction_occurred_at: datetime | None
+
     corrects_transition_id: UUID | None
     client_op_id: UUID | None
 
@@ -132,6 +138,12 @@ class OwnershipRequest(PhysicalChangeRequest):
 
 class PhysicalChangeOut(BaseModel):
     """Immutable physical change with global produced version and separate time claims."""
+
+    cancels_history_id: UUID | None = None
+    correction_role: Literal["NONE", "REVERSAL", "CORRECTED"]
+    correction_pair_id: UUID | None
+    correction_generation: int
+    correction_occurred_at: datetime | None
 
     id: UUID
     org_id: UUID

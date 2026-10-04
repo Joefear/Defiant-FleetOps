@@ -106,6 +106,14 @@ def test_asset_schema_contains_only_authorized_objects_and_text_states(migrator_
         "receipt_lines",
         "receipt_reconciliations",
         "receiving_exceptions",
+        "purchase_order_line_corrections",
+        "receipt_line_corrections",
+        "receipt_correction_evaluations",
+        "receipt_evaluation_lines",
+        "receipt_evaluation_expectations",
+        "exception_workflows",
+        "exception_events",
+        "receipt_evaluation_exceptions",
     }
     assert (
         connection.exec_driver_sql(

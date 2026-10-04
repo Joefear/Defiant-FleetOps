@@ -155,7 +155,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(create_catalog_router(authenticated))
     app.include_router(create_space_router(authenticated))
+    from fleetops.api.corrections import create_correction_router
+
     app.include_router(create_asset_router(authenticated))
+    app.include_router(create_correction_router(authenticated))
+    from fleetops.api.record_corrections import create_record_correction_router
+
+    app.include_router(create_record_correction_router(authenticated))
     app.include_router(create_procurement_router(authenticated))
     app.include_router(create_receiving_router(authenticated))
     return app

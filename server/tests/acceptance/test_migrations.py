@@ -1,6 +1,6 @@
 """Slice 1 acceptance: Alembic round-trips cleanly and only the DDL owner may run it."""
 
-from conftest import assert_migration_succeeded, user_relations
+from server.tests.conftest import assert_migration_succeeded, user_relations
 
 
 def test_alembic_upgrade_downgrade_round_trip(database, migrator_connection):
@@ -29,7 +29,7 @@ def test_alembic_upgrade_downgrade_round_trip(database, migrator_connection):
             migrator_connection.exec_driver_sql(
                 "SELECT version_num FROM fleetops.alembic_version"
             ).scalar_one()
-            == "0010_receiving"
+            == "0011_corrections"
         )
         migrator_connection.rollback()
         assert_migration_succeeded(database.migrate("check"))

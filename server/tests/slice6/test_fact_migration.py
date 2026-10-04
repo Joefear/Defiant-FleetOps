@@ -2,7 +2,7 @@
 
 import pytest
 from server.tests.auth_context import set_authenticated
-from server.tests.migration_snapshot import schema_snapshot
+from server.tests.migration_snapshot import historical_snapshot, schema_snapshot
 from server.tests.slice4.test_space_cycle_migration import guard_objects
 from server.tests.slice6.conftest import (
     KINDS,
@@ -83,22 +83,27 @@ def test_populated_0006_round_trip_never_backfills_or_lazily_invents_baseline(
         before, roles = schema_snapshot(connection), role_snapshot(connection)
         migrate(database, "upgrade", "head")
         upgraded = schema_snapshot(connection)
+        historical_upgraded = historical_snapshot(database, connection)
         for name, definition in before.items():
             if name not in {"alembic_version", "functions", "triggers", "assets"}:
-                assert upgraded[name] == definition
+                assert historical_upgraded[name] == definition
         # Slice 7 replaces precisely the deferred NULL-only assignment constraint
         # with the activated same-tenant/same-Asset event FK. Every other detail stays exact.
         assert (
-            upgraded["assets"] | {"constraints": before["assets"]["constraints"]}
+            historical_upgraded["assets"] | {"constraints": before["assets"]["constraints"]}
             == before["assets"]
         )
-        assert [c for c in upgraded["assets"]["constraints"] if c[0] != "fk_assets_assignment"] == [
+        assert [
+            c
+            for c in historical_upgraded["assets"]["constraints"]
+            if c[0] != "fk_assets_assignment"
+        ] == [
             c for c in before["assets"]["constraints"] if c[0] != "ck_assets_assignment_unavailable"
         ]
-        assert set(before["functions"]) <= set(upgraded["functions"])
-        assert set(before["triggers"]) <= set(upgraded["triggers"])
-        assert len(upgraded["functions"]) == len(before["functions"]) + 12
-        assert len(upgraded["triggers"]) == len(before["triggers"]) + 26
+        assert set(before["functions"]) <= set(historical_upgraded["functions"])
+        assert set(before["triggers"]) <= set(historical_upgraded["triggers"])
+        assert len(historical_upgraded["functions"]) == len(before["functions"]) + 12
+        assert len(historical_upgraded["triggers"]) == len(before["triggers"]) + 26
         assert role_snapshot(connection) == roles
         assert guard_objects(connection) == (1, 1, 1)
         connection.rollback()
@@ -211,8 +216,12 @@ def test_new_tables_have_exact_schema_tenant_policies_and_read_only_runtime_gran
             kind.from_field,
             kind.to_field,
             kind.correction,
+            "correction_role",
+            "correction_generation",
+            "correction_pair_id",
+            "correction_occurred_at",
         }
-        nullable = {kind.correction, "client_op_id"}
+        nullable = {kind.correction, "client_op_id", "correction_pair_id", "correction_occurred_at"}
         if kind is not OWNERSHIP:
             nullable |= {kind.from_field, kind.to_field}
         assert columns["result_version"].data_type == "integer"

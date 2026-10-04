@@ -67,8 +67,14 @@ def assignment_history(connection: Connection, asset_id: UUID):
         .mappings()
         .all()
     )
+    # Resolve correction helpers after asset-domain initialization: corrections
+    # imports assets, whose history reader calls back into corrections.
+    from fleetops.domain.corrections import audit_rows, effective_events
+
+    events = audit_rows(events, "corrects_assignment_event_id")
+    effective = effective_events(events, "corrects_assignment_event_id")
     intervals = []
-    for index, event in enumerate(events):
+    for index, event in enumerate(effective):
         if event["to_assignee_id"] is not None:
             intervals.append(
                 dict(
@@ -76,7 +82,9 @@ def assignment_history(connection: Connection, asset_id: UUID):
                     assignee_type=event["to_assignee_type"],
                     assignee_id=event["to_assignee_id"],
                     started_at=event["occurred_at"],
-                    ended_at=events[index + 1]["occurred_at"] if index + 1 < len(events) else None,
+                    ended_at=effective[index + 1]["occurred_at"]
+                    if index + 1 < len(effective)
+                    else None,
                 )
             )
     return dict(initial_assignment_fact=witness, events=events, intervals=intervals)

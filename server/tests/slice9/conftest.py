@@ -24,6 +24,7 @@ from fleetops.db.metadata import (
     asset_transitions,
     assets,
     items,
+    metadata,
     purchase_order_lines,
     purchase_orders,
     receipt_comparators,
@@ -68,17 +69,45 @@ def receiving_cleanup(space_data, migrator_connection, app_connection):
     app_connection.rollback()
     migrator_connection.rollback()
     orgs = [tenant.org_id for tenant in space_data]
+    correction_names = {
+        "purchase_order_line_corrections",
+        "receipt_line_corrections",
+        "receipt_correction_evaluations",
+        "receipt_evaluation_lines",
+        "receipt_evaluation_expectations",
+        "exception_workflows",
+        "exception_events",
+        "receipt_evaluation_exceptions",
+    }
+    cleanup_tables = [
+        table
+        for table in metadata.sorted_tables
+        if table.name in correction_names | {t.name for t in RECEIVING_TABLES}
+    ]
     with migrator_connection.begin():
+        for table in cleanup_tables:
+            if table.name in correction_names:
+                migrator_connection.exec_driver_sql(
+                    f"ALTER TABLE fleetops.{table.name} DISABLE TRIGGER USER"
+                )
         for table in RECEIVING_TABLES:
             migrator_connection.exec_driver_sql(
                 f"ALTER TABLE fleetops.{table.name} DISABLE TRIGGER receiving_10_guard"
             )
-        for table in reversed(RECEIVING_TABLES):
+        for table in reversed(cleanup_tables):
             migrator_connection.execute(table.delete().where(table.c.org_id.in_(orgs)))
+        # The introduction FK closes an intentional history cycle. Drain its
+        # deferred deletion checks before ALTER TABLE restores user triggers.
+        migrator_connection.exec_driver_sql("SET CONSTRAINTS ALL IMMEDIATE")
         for table in RECEIVING_TABLES:
             migrator_connection.exec_driver_sql(
                 f"ALTER TABLE fleetops.{table.name} ENABLE TRIGGER receiving_10_guard"
             )
+        for table in cleanup_tables:
+            if table.name in correction_names:
+                migrator_connection.exec_driver_sql(
+                    f"ALTER TABLE fleetops.{table.name} ENABLE TRIGGER USER"
+                )
         for table in (purchase_orders, purchase_order_lines):
             migrator_connection.exec_driver_sql(
                 f"ALTER TABLE fleetops.{table.name} DISABLE TRIGGER procurement_10_guard"

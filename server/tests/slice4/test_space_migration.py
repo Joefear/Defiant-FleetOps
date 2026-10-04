@@ -151,6 +151,14 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
         "receipt_lines",
         "receipt_reconciliations",
         "receiving_exceptions",
+        "purchase_order_line_corrections",
+        "receipt_line_corrections",
+        "receipt_correction_evaluations",
+        "receipt_evaluation_lines",
+        "receipt_evaluation_expectations",
+        "receipt_evaluation_exceptions",
+        "exception_workflows",
+        "exception_events",
     }
     assert connection.exec_driver_sql(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -158,9 +166,23 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
     ).all() == [
         (name,)
         for name in (
+            "assert_asset_correction_authority",
+            "assert_receipt_correction_complete",
             "assign_asset",
             "change_custody",
             "change_ownership",
+            "check_asset_assignment_events_pairs",
+            "check_asset_custody_changes_pairs",
+            "check_asset_movements_pairs",
+            "check_asset_ownership_changes_pairs",
+            "check_asset_transitions_pairs",
+            "complete_purchase_order_line_corrections",
+            "complete_receipt_line_corrections",
+            "correct_assignment",
+            "correct_custody",
+            "correct_movement",
+            "correct_ownership",
+            "correct_transition",
             "create_received_unit",
             "current_authenticated_actor",
             "enforce_asset_initial_state",
@@ -172,12 +194,19 @@ def test_space_schema_is_exact_and_uses_tenant_safe_keys(migrator_connection):
             "enforce_receiving_completeness",
             "enforce_receiving_exception",
             "enforce_receiving_record",
+            "guard_exception_workflow_identity",
+            "guard_purchase_order_line_corrections",
+            "guard_receipt_evaluation",
+            "guard_receipt_line_corrections",
+            "initialize_exception_workflow",
             "issue_session",
             "lock_receiving_context",
             "move_asset",
+            "normalize_correction_reason",
             "resolve_session",
             "revoke_current_session",
             "transition_asset",
+            "transition_exception",
             "unassign_asset",
         )
     ]

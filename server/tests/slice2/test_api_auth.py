@@ -298,9 +298,24 @@ def test_http_scope_has_no_later_slice_or_user_management_routes(client):
             "/redoc",
         )
     }
-    # Keep an exact current-head allowlist: only the authorized Slice 3/4/5/6/7/8/9 routes
+    # Keep an exact current-head allowlist: only the authorized Slice 3/4/5/6/7/8/9/10 routes
     # extend the original surface. User management and later workflows remain excluded.
     assert methods == {
+        ("POST", "/assets/{asset_id}/transitions/{root_id}/corrections"),
+        ("POST", "/assets/{asset_id}/movements/{root_id}/corrections"),
+        ("POST", "/assets/{asset_id}/custody-changes/{root_id}/corrections"),
+        ("POST", "/assets/{asset_id}/ownership-changes/{root_id}/corrections"),
+        ("POST", "/assets/{asset_id}/assignments/{root_id}/corrections"),
+        ("POST", "/purchase-orders/{po_id}/lines/{root_id}/corrections"),
+        ("GET", "/purchase-orders/{po_id}/lines/{root_id}/corrections"),
+        ("GET", "/purchase-orders/{po_id}/lines/{root_id}/effective"),
+        ("POST", "/receipts/{receipt_id}/lines/{root_id}/corrections"),
+        ("GET", "/receipts/{receipt_id}/lines/{root_id}/corrections"),
+        ("GET", "/receipts/{receipt_id}/lines/{root_id}/effective"),
+        ("POST", "/exceptions/{exception_id}/events"),
+        ("GET", "/exceptions/{exception_id}"),
+        ("GET", "/exceptions/open"),
+        ("GET", "/health/corrections"),
         ("POST", "/auth/login"),
         ("POST", "/auth/logout"),
         ("GET", "/auth/me"),

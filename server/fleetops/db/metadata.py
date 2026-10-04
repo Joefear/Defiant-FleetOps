@@ -1149,3 +1149,110 @@ Index(
 (receipts, receipt_comparators, receipt_lines, receipt_reconciliations, receiving_exceptions) = (
     define_receiving_tables(metadata)
 )
+
+# Forward correction mapping; frozen migrations retain independent definitions.
+from fleetops.db.correction_schema import extend_asset_history  # noqa: E402
+
+for correction_table, correction_root in (
+    (asset_transitions, "corrects_transition_id"),
+    (asset_movements, "corrects_movement_id"),
+    (asset_custody_changes, "corrects_custody_change_id"),
+    (asset_ownership_changes, "corrects_ownership_change_id"),
+    (asset_assignment_events, "corrects_assignment_event_id"),
+):
+    extend_asset_history(correction_table, correction_root)
+
+
+from fleetops.db.record_correction_schema import define_record_corrections  # noqa: E402
+
+(
+    purchase_order_line_corrections,
+    receipt_line_corrections,
+    receipt_correction_evaluations,
+    receipt_evaluation_lines,
+    receipt_evaluation_expectations,
+    exception_workflows,
+    exception_events,
+    receipt_evaluation_exceptions,
+) = define_record_corrections(metadata)
+receipt_comparators.append_column(
+    Column("source_generation", Integer, nullable=False, server_default=text("0"))
+)
+receipt_comparators.append_column(Column("source_id", Uuid))
+receipt_comparators.append_column(
+    Column("source_role", Text, Computed("'CORRECTED'::text", persisted=True), nullable=False)
+)
+receipt_comparators.append_constraint(
+    CheckConstraint(
+        "(source_generation=0 AND source_id IS NULL) OR "
+        "(source_generation>0 AND source_id IS NOT NULL)",
+        name="ck_receipt_comparators_source",
+    )
+)
+receipt_comparators.append_constraint(
+    ForeignKeyConstraint(
+        ["org_id", "po_line_id", "source_generation", "source_id", "source_role"],
+        [
+            "fleetops.purchase_order_line_corrections." + field
+            for field in ("org_id", "po_line_id", "correction_generation", "id", "correction_role")
+        ],
+        name="fk_receipt_comparators_source",
+    )
+)
+receiving_exceptions.append_column(Column("evaluation_id", Uuid))
+receiving_exceptions.append_constraint(
+    ForeignKeyConstraint(
+        ["org_id", "evaluation_id"],
+        [
+            "fleetops.receipt_correction_evaluations.org_id",
+            "fleetops.receipt_correction_evaluations.id",
+        ],
+        name="fk_receiving_exceptions_evaluation",
+    )
+)
+for old_index in list(receiving_exceptions.indexes):
+    if old_index.name in {"uq_receiving_exceptions_line", "uq_receiving_exceptions_aggregate"}:
+        receiving_exceptions.indexes.remove(old_index)
+for index_name, columns, predicate in (
+    (
+        "uq_receiving_exceptions_line",
+        ("org_id", "receipt_line_id", "exception_type"),
+        "receipt_line_id IS NOT NULL AND evaluation_id IS NULL",
+    ),
+    (
+        "uq_receiving_exceptions_aggregate",
+        ("org_id", "receipt_id", "po_line_id", "exception_type"),
+        "receipt_line_id IS NULL AND evaluation_id IS NULL",
+    ),
+    (
+        "uq_receiving_exceptions_evaluation_line",
+        ("org_id", "evaluation_id", "receipt_line_id", "exception_type"),
+        "receipt_line_id IS NOT NULL AND evaluation_id IS NOT NULL",
+    ),
+    (
+        "uq_receiving_exceptions_evaluation_aggregate",
+        ("org_id", "evaluation_id", "po_line_id", "exception_type"),
+        "receipt_line_id IS NULL AND evaluation_id IS NOT NULL",
+    ),
+):
+    Index(
+        index_name,
+        *(receiving_exceptions.c[field] for field in columns),
+        unique=True,
+        postgresql_where=text(predicate),
+    )
+
+receipt_comparators.append_column(Column("introduced_by_correction_id", Uuid))
+receipt_comparators.append_constraint(
+    ForeignKeyConstraint(
+        ["org_id", "receipt_id", "introduced_by_correction_id", "source_role"],
+        [
+            "fleetops.receipt_line_corrections." + field
+            for field in ("org_id", "receipt_id", "id", "correction_role")
+        ],
+        name="fk_receipt_comparators_introduction",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)

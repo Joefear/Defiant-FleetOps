@@ -99,7 +99,7 @@ def list_identifiers(connection: Connection, asset_id: UUID):
 def list_transitions(connection: Connection, asset_id: UUID):
     """Global result versions order state history even when occurrence clocks disagree."""
     get_asset(connection, asset_id)
-    return (
+    rows = (
         connection.execute(
             select(asset_transitions)
             .where(asset_transitions.c.asset_id == asset_id)
@@ -108,6 +108,11 @@ def list_transitions(connection: Connection, asset_id: UUID):
         .mappings()
         .all()
     )
+    # Resolve correction helpers after asset-domain initialization: corrections
+    # imports assets, whose history reader calls back into corrections.
+    from fleetops.domain.corrections import audit_rows
+
+    return audit_rows(rows, "corrects_transition_id")
 
 
 def transition_asset(connection: Connection, asset_id: UUID, *, values: dict):
@@ -132,10 +137,11 @@ def transition_asset(connection: Connection, asset_id: UUID, *, values: dict):
             raise AssetNotFound("Asset not found")
         latest = (
             connection.execute(
-                select(asset_transitions)
-                .where(asset_transitions.c.asset_id == asset_id)
-                .order_by(asset_transitions.c.result_version.desc())
-                .limit(1)
+                text("""
+            SELECT * FROM fleetops.effective_asset_transitions
+            WHERE asset_id=:asset_id ORDER BY result_version DESC LIMIT 1
+        """),
+                {"asset_id": asset_id},
             )
             .mappings()
             .one_or_none()
@@ -178,7 +184,7 @@ def reconcile_state(connection: Connection):
                ], NULL) AS discrepancies
         FROM fleetops.assets a
         LEFT JOIN LATERAL (
-            SELECT t.id, t.to_state, t.result_version FROM fleetops.asset_transitions t
+            SELECT t.id, t.to_state, t.result_version FROM fleetops.effective_asset_transitions t
             WHERE t.org_id = a.org_id AND t.asset_id = a.id
             ORDER BY t.result_version DESC LIMIT 1
         ) h ON true

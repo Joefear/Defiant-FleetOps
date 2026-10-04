@@ -1,8 +1,6 @@
 """Exact migration-owned data and catalog snapshots for real PostgreSQL round trips."""
 
-from sqlalchemy import select
-
-from fleetops.db.metadata import metadata
+from sqlalchemy import MetaData, Table, select
 
 
 def schema_snapshot(connection):
@@ -18,12 +16,12 @@ def schema_snapshot(connection):
     )
     for name in names:
         qualified = f"fleetops.{name}"
+        # Reflect the boundary being tested, not future runtime columns.
+        snapshot_table = Table(name, MetaData(), schema="fleetops", autoload_with=connection)
         result[name] = {
             "rows": (
                 connection.execute(
-                    select(metadata.tables[qualified]).order_by(
-                        *metadata.tables[qualified].primary_key.columns
-                    )
+                    select(snapshot_table).order_by(*snapshot_table.primary_key.columns)
                 ).all()
                 if name != "alembic_version"
                 else connection.exec_driver_sql("SELECT * FROM fleetops.alembic_version").all()
@@ -85,5 +83,29 @@ def schema_snapshot(connection):
         "n.nspname='fleetops' AND NOT t.tgisinternal ORDER BY "
         "c.relname,t.tgname"
     ).all()
+    result["views"] = connection.exec_driver_sql("""
+        SELECT c.relname, pg_get_viewdef(c.oid), pg_get_userbyid(c.relowner),
+               c.reloptions, c.relacl::text
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='fleetops' AND c.relkind='v' ORDER BY c.relname
+    """).all()
     connection.rollback()
     return result
+
+
+def historical_snapshot(database, connection, revision="0010_receiving"):
+    """Preserve exact earlier-slice assertions at their accepted boundary, then restore head.
+
+    Current-head equality is still checked by each round trip. A forward migration
+    legitimately changes earlier functions and adds columns; it cannot retroactively
+    change what the original migration was allowed to install.
+    """
+    connection.rollback()
+    result = database.migrate("downgrade", revision)
+    assert result.returncode == 0, result.stdout + result.stderr
+    try:
+        return schema_snapshot(connection)
+    finally:
+        connection.rollback()
+        result = database.migrate("upgrade", "head")
+        assert result.returncode == 0, result.stdout + result.stderr

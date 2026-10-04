@@ -1,7 +1,7 @@
 """Exact predecessor restoration and explicit installed receiving authority inventory."""
 
 import pytest
-from server.tests.migration_snapshot import schema_snapshot
+from server.tests.migration_snapshot import historical_snapshot, schema_snapshot
 from server.tests.slice6.test_fact_migration import migrate, role_snapshot
 from server.tests.slice7.test_migration import sequence_snapshot
 from server.tests.slice9.conftest import RECEIVING_TABLES
@@ -17,7 +17,15 @@ INSERTED = {
         "packing_reference",
         "received_at",
     },
-    "receipt_comparators": {"id", "org_id", "receipt_id", "po_line_id"},
+    "receipt_comparators": {
+        "id",
+        "org_id",
+        "receipt_id",
+        "po_line_id",
+        "source_generation",
+        "source_id",
+        "introduced_by_correction_id",
+    },
     "receipt_lines": {
         "id",
         "org_id",
@@ -44,11 +52,12 @@ INSERTED = {
         "po_line_id",
         "asset_id",
         "conflicting_asset_id",
+        "evaluation_id",
     },
 }
 SERVER_COLUMNS = {
     "receipts": {"vendor_role"},
-    "receipt_comparators": set(),
+    "receipt_comparators": {"source_role"},
     "receipt_lines": {"serialized", "asset_id"},
     "receipt_reconciliations": set(),
     "receiving_exceptions": set(),
@@ -77,7 +86,8 @@ def assert_exact_additions(before, head):
 
 
 def round_trip(database, connection, historical=None):
-    head = schema_snapshot(connection)
+    full_head = schema_snapshot(connection)
+    head = historical_snapshot(database, connection)
     roles, sequence = role_snapshot(connection), sequence_snapshot(connection)
     try:
         migrate(database, "downgrade", "0009_procurement")
@@ -89,6 +99,8 @@ def round_trip(database, connection, historical=None):
         assert_exact_additions(before, head)
         assert role_snapshot(connection) == roles
         assert sequence_snapshot(connection) == sequence
+        migrate(database, "upgrade", "head")
+        assert schema_snapshot(connection) == full_head
         migrate(database, "check")
         migrate(database, "downgrade", "0009_procurement")
         assert schema_snapshot(connection) == before
@@ -96,6 +108,8 @@ def round_trip(database, connection, historical=None):
         assert sequence_snapshot(connection) == sequence
         migrate(database, "upgrade", "0010_receiving")
         assert schema_snapshot(connection) == head
+        migrate(database, "upgrade", "head")
+        assert schema_snapshot(connection) == full_head
         migrate(database, "check")
     finally:
         connection.rollback()

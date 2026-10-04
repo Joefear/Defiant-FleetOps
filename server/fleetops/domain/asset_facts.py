@@ -16,13 +16,19 @@ from fleetops.domain.assets import _constraints, get_asset
 def _list_history(connection: Connection, asset_id: UUID, table):
     """Require a visible Asset, then read its class history in authoritative version order."""
     get_asset(connection, asset_id)
-    return (
+    rows = (
         connection.execute(
             select(table).where(table.c.asset_id == asset_id).order_by(table.c.result_version)
         )
         .mappings()
         .all()
     )
+    # Resolve correction helpers after asset-domain initialization: corrections
+    # imports assets, whose history reader calls back into corrections.
+    from fleetops.domain.corrections import audit_rows
+
+    root_field = next(column.name for column in table.c if column.name.startswith("corrects_"))
+    return audit_rows(rows, root_field)
 
 
 def list_movements(connection: Connection, asset_id: UUID):
@@ -168,24 +174,25 @@ WITH tenant_assets AS (
     LEFT JOIN fleetops.asset_assignment_events target
       ON target.org_id = a.org_id AND target.id = a.current_assignment_id
     LEFT JOIN LATERAL (
-        SELECT id, to_state, result_version FROM fleetops.asset_transitions
+        SELECT id, to_state, result_version FROM fleetops.effective_asset_transitions
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) t ON true
     LEFT JOIN LATERAL (
-        SELECT id, to_location_id, result_version FROM fleetops.asset_movements
+        SELECT id, to_location_id, result_version FROM fleetops.effective_asset_movements
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) m ON true
     LEFT JOIN LATERAL (
-        SELECT id, to_custodian_party_id, result_version FROM fleetops.asset_custody_changes
+        SELECT id, to_custodian_party_id, result_version FROM
+          fleetops.effective_asset_custody_changes
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) c ON true
     LEFT JOIN LATERAL (
-        SELECT id, to_owner_party_id, result_version FROM fleetops.asset_ownership_changes
+        SELECT id, to_owner_party_id, result_version FROM fleetops.effective_asset_ownership_changes
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) o ON true
     LEFT JOIN LATERAL (
         SELECT id, to_assignee_type, to_assignee_id, result_version
-        FROM fleetops.asset_assignment_events
+        FROM fleetops.effective_asset_assignment_events
         WHERE org_id = a.org_id AND asset_id = a.id ORDER BY result_version DESC LIMIT 1
     ) e ON true
 ), checked AS (
@@ -194,6 +201,9 @@ WITH tenant_assets AS (
         v.duplicate_versions AS global_duplicate_versions,
         v.ahead_versions AS global_ahead_versions,
         array_remove(ARRAY[
+            CASE WHEN EXISTS (SELECT 1 FROM fleetops.asset_correction_anomalies bad
+                              WHERE bad.asset_id=f.asset_id)
+                 THEN 'correction_history_malformed' END,
             CASE WHEN transition_id IS NULL THEN 'missing_history' END,
             CASE WHEN transition_id IS NOT NULL AND current_state <> latest_state
                  THEN 'state_mismatch' END,
@@ -243,7 +253,8 @@ WITH tenant_assets AS (
     JOIN global_checks v ON v.org_id = f.org_id AND v.asset_id = f.asset_id
     LEFT JOIN gaps g ON g.org_id = f.org_id AND g.asset_id = f.asset_id
 )
-SELECT * FROM checked WHERE cardinality(discrepancies) > 0 ORDER BY asset_id
+SELECT * FROM checked WHERE cardinality(discrepancies) > 0
+  OR asset_id=ANY(CAST(:invalid_lifecycle_ids AS uuid[])) ORDER BY asset_id
 """)
 
 
@@ -255,4 +266,18 @@ def reconcile_assets(connection: Connection):
     including after later events. Neither witness nor configuration produces a version.
     Slice 5 state fields/categories retain their meaning; per-class version gaps are valid.
     """
-    return connection.execute(RECONCILIATION_SQL).mappings().all()
+    # Resolve correction helpers after asset-domain initialization: corrections
+    # imports assets, whose history reader calls back into corrections.
+    from fleetops.domain.corrections import lifecycle_correction_issues
+
+    invalid = {row["entity_id"] for row in lifecycle_correction_issues(connection)}
+    rows = [
+        dict(row)
+        for row in connection.execute(
+            RECONCILIATION_SQL, dict(invalid_lifecycle_ids=list(invalid))
+        ).mappings()
+    ]
+    for row in rows:
+        if row["asset_id"] in invalid:
+            row["discrepancies"].append("illegal_corrected_lifecycle")
+    return rows

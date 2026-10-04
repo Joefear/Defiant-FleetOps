@@ -30,8 +30,10 @@ class AssignmentEventOut(PhysicalChangeOut):
 
     @computed_field
     @property
-    def event_type(self) -> Literal["ASSIGN", "UNASSIGN", "REASSIGN"]:
+    def event_type(self) -> Literal["ASSIGN", "UNASSIGN", "REASSIGN", "ADMINISTRATIVE_REVERSAL"]:
         """Classify the immutable pair semantics for consumers of the history API."""
+        if self.correction_role == "REVERSAL":
+            return "ADMINISTRATIVE_REVERSAL"
         if self.to_assignee_id is None:
             return "UNASSIGN"
         return "ASSIGN" if self.from_assignee_id is None else "REASSIGN"

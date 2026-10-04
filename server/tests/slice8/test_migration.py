@@ -1,7 +1,7 @@
 """Exact 0008 restoration, additive current-head inventory, and installed authority."""
 
 import pytest
-from server.tests.migration_snapshot import schema_snapshot
+from server.tests.migration_snapshot import historical_snapshot, schema_snapshot
 from server.tests.slice6.test_fact_migration import migrate, role_snapshot
 from server.tests.slice7.test_migration import sequence_snapshot
 from sqlalchemy import create_engine, text
@@ -44,7 +44,9 @@ def test_fresh_0008_snapshot_round_trip_exactly_restores_all_owned_objects(fresh
                 assert sequence_snapshot(connection) == sequence
                 migrate(fresh_database, "upgrade", "head")
                 assert schema_snapshot(connection) == head
-                assert_only_procurement_added(fresh_database.historical_0008, head)
+                assert_only_procurement_added(
+                    fresh_database.historical_0008, historical_snapshot(fresh_database, connection)
+                )
                 assert role_snapshot(connection) == roles
                 assert sequence_snapshot(connection) == sequence
                 migrate(fresh_database, "check")
@@ -67,7 +69,7 @@ def test_populated_0008_round_trip_preserves_asset_histories_and_auth(
         roles, sequence = role_snapshot(connection), sequence_snapshot(connection)
         migrate(database, "upgrade", "head")
         head = schema_snapshot(connection)
-        assert_only_procurement_added(before, head)
+        assert_only_procurement_added(before, historical_snapshot(database, connection))
         assert role_snapshot(connection) == roles
         assert sequence_snapshot(connection) == sequence
         migrate(database, "check")

@@ -2,7 +2,7 @@
 
 import pytest
 from server.tests.auth_context import set_authenticated
-from server.tests.migration_snapshot import schema_snapshot
+from server.tests.migration_snapshot import historical_snapshot, schema_snapshot
 from server.tests.slice4.test_space_cycle_migration import guard_objects
 from server.tests.slice6.conftest import for_asset
 from server.tests.slice6.test_fact_migration import migrate, role_snapshot
@@ -51,7 +51,7 @@ def sequence_snapshot(connection):
 
 
 def assert_only_slice7_changes(before, upgraded):
-    """Allow only the Slice 7 changes plus Slice 8/9 objects at current head."""
+    """Allow only the Slice 7 changes plus Slice 8/9 objects through the accepted 0010 boundary."""
     assert set(upgraded) == set(before) | {table.name for table in TABLES} | {
         "purchase_orders",
         "purchase_order_lines",
@@ -96,7 +96,9 @@ def test_fresh_0007_round_trip_restores_exact_schema_security_and_sequence(fresh
                 assert role_snapshot(connection) == roles
                 migrate(fresh_database, "upgrade", "head")
                 assert (schema_snapshot(connection), sequence_snapshot(connection)) == head
-                assert_only_slice7_changes(fresh_database.historical_0007, head[0])
+                assert_only_slice7_changes(
+                    fresh_database.historical_0007, historical_snapshot(fresh_database, connection)
+                )
                 assert role_snapshot(connection) == roles
                 migrate(fresh_database, "check")
             finally:
@@ -121,7 +123,7 @@ def test_populated_0007_round_trip_never_backfills_or_lazily_invents_assignment_
         assert sequence_snapshot(connection) == ([], [])
         migrate(database, "upgrade", "head")
         upgraded, sequence = schema_snapshot(connection), sequence_snapshot(connection)
-        assert_only_slice7_changes(before, upgraded)
+        assert_only_slice7_changes(before, historical_snapshot(database, connection))
         assert all(upgraded[table.name]["rows"] == [] for table in TABLES)
         assert role_snapshot(connection) == roles
         assert guard_objects(connection) == (1, 1, 1)
@@ -259,9 +261,23 @@ def test_installed_tables_have_exact_fields_defaults_rls_and_minimal_grants(
             "to_assignee_type",
             "to_assignee_id",
             "corrects_assignment_event_id",
+            "correction_pair_id",
+            "correction_occurred_at",
             "client_op_id",
         }
-        expected = common | nullable | {"id", "actor_id", "occurred_at", "reason", "result_version"}
+        expected = (
+            common
+            | nullable
+            | {
+                "id",
+                "actor_id",
+                "occurred_at",
+                "reason",
+                "result_version",
+                "correction_role",
+                "correction_generation",
+            }
+        )
         assert columns["result_version"].data_type == "integer"
     assert set(columns) == expected
     assert {name for name, c in columns.items() if c.is_nullable == "YES"} == nullable

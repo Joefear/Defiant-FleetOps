@@ -45,6 +45,7 @@ class Database:
     historical_0007: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0008: dict = field(default_factory=dict, repr=False, compare=False)
     historical_0009: dict = field(default_factory=dict, repr=False, compare=False)
+    historical_0010: dict = field(default_factory=dict, repr=False, compare=False)
 
     def url(self, role: str) -> URL:
         passwords = {
@@ -206,6 +207,9 @@ def disposable_database():
             assert_migration_succeeded(db.migrate("upgrade", "0009_procurement"))
             with snapshot_engine.connect() as connection:
                 db.historical_0009.update(schema_snapshot(connection))
+            assert_migration_succeeded(db.migrate("upgrade", "0010_receiving"))
+            with snapshot_engine.connect() as connection:
+                db.historical_0010.update(schema_snapshot(connection))
         finally:
             snapshot_engine.dispose()
         assert_migration_succeeded(db.migrate("upgrade", "head"))
@@ -246,38 +250,90 @@ def disposable_database():
                             "receiving_exceptions",
                             "sessions",
                             "users",
+                            "purchase_order_line_corrections",
+                            "receipt_line_corrections",
+                            "receipt_correction_evaluations",
+                            "receipt_evaluation_lines",
+                            "receipt_evaluation_expectations",
+                            "exception_workflows",
+                            "exception_events",
+                            "receipt_evaluation_exceptions",
                         )
                     ]
                     + [("fleetops", "asset_configurations_configuration_seq_seq", "S")]
+                    + [
+                        ("fleetops", name, "v")
+                        for name in (
+                            "asset_correction_anomalies",
+                            "effective_asset_transitions",
+                            "effective_asset_movements",
+                            "effective_asset_custody_changes",
+                            "effective_asset_ownership_changes",
+                            "effective_asset_assignment_events",
+                            "effective_purchase_order_lines",
+                            "effective_receipt_lines",
+                            "purchase_order_line_corrections_anomalies",
+                            "receipt_line_corrections_anomalies",
+                            "exception_workflow_anomalies",
+                            "evaluated_receipt_lines",
+                            "correction_anomalies",
+                            "receipt_evaluation_anomalies",
+                            "evaluated_receipt_expectations",
+                            "receipt_evaluation_disagreements",
+                        )
+                    ]
                 )
                 assert connection.exec_driver_sql(
                     "SELECT p.proname FROM pg_proc p "
                     "JOIN pg_namespace n ON n.oid = p.pronamespace "
                     "WHERE n.nspname NOT IN ('information_schema') "
                     "AND left(n.nspname, 3) <> 'pg_' ORDER BY p.proname"
-                ).all() == [
-                    ("assign_asset",),
-                    ("change_custody",),
-                    ("change_ownership",),
-                    ("create_received_unit",),
-                    ("current_authenticated_actor",),
-                    ("enforce_asset_initial_state",),
-                    ("enforce_authenticated_creator",),
-                    ("enforce_authenticated_updater",),
-                    ("enforce_location_acyclic",),
-                    ("enforce_purchase_order",),
-                    ("enforce_purchase_order_line",),
-                    ("enforce_receiving_completeness",),
-                    ("enforce_receiving_exception",),
-                    ("enforce_receiving_record",),
-                    ("issue_session",),
-                    ("lock_receiving_context",),
-                    ("move_asset",),
-                    ("resolve_session",),
-                    ("revoke_current_session",),
-                    ("transition_asset",),
-                    ("unassign_asset",),
-                ]
+                ).all() == sorted(
+                    [
+                        ("assert_asset_correction_authority",),
+                        ("normalize_correction_reason",),
+                        ("assign_asset",),
+                        ("change_custody",),
+                        ("change_ownership",),
+                        ("check_asset_assignment_events_pairs",),
+                        ("check_asset_custody_changes_pairs",),
+                        ("check_asset_movements_pairs",),
+                        ("check_asset_ownership_changes_pairs",),
+                        ("check_asset_transitions_pairs",),
+                        ("correct_assignment",),
+                        ("correct_custody",),
+                        ("correct_movement",),
+                        ("correct_ownership",),
+                        ("correct_transition",),
+                        ("create_received_unit",),
+                        ("current_authenticated_actor",),
+                        ("enforce_asset_initial_state",),
+                        ("enforce_authenticated_creator",),
+                        ("enforce_authenticated_updater",),
+                        ("enforce_location_acyclic",),
+                        ("enforce_purchase_order",),
+                        ("enforce_purchase_order_line",),
+                        ("enforce_receiving_completeness",),
+                        ("enforce_receiving_exception",),
+                        ("enforce_receiving_record",),
+                        ("issue_session",),
+                        ("lock_receiving_context",),
+                        ("move_asset",),
+                        ("resolve_session",),
+                        ("revoke_current_session",),
+                        ("transition_asset",),
+                        ("unassign_asset",),
+                        ("assert_receipt_correction_complete",),
+                        ("guard_purchase_order_line_corrections",),
+                        ("complete_purchase_order_line_corrections",),
+                        ("guard_receipt_line_corrections",),
+                        ("complete_receipt_line_corrections",),
+                        ("initialize_exception_workflow",),
+                        ("transition_exception",),
+                        ("guard_receipt_evaluation",),
+                        ("guard_exception_workflow_identity",),
+                    ]
+                )
         finally:
             engine.dispose()
     finally:

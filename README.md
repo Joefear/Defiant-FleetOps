@@ -1,10 +1,10 @@
 # Defiant FleetOps
 
-Slice 9 adds immutable receiving reality, production serialized Asset creation and
-all ten receiving Exception types. Exact PO-line comparators, receipt-local quantity
-reconciliation and the known serial-conflict observation path follow accepted
-ADR-010 through ADR-012. Earlier identity, catalog, space, Asset history, assignment,
-configuration and procurement behavior remains in place.
+Slice 10 adds typed correction pairs, effective history, correction generations,
+and append-only Exception workflow under ADR-013. Receiving retains immutable
+physical observations, permanent serialized Asset creation, exact comparator
+sources and receipt-local reconciliation. Earlier identity, catalog, space, Asset
+history, assignment, configuration and procurement behavior remains in place.
 
 The governing source is
 [Architecture & Boundary v0.1](docs/architecture/FleetOps_Architecture_Boundary_v0.1.docx).
@@ -79,8 +79,8 @@ Migration connections use a catalog-only search path; migration DDL must name
 the `fleetops` schema explicitly. Revision `0001_empty_baseline` has no-op
 upgrade/downgrade functions. At that revision,
 `fleetops.alembic_version` is the only table and is migrator-owned. At base, that
-bookkeeping table is empty. Head is `0010_receiving` and includes the
-Slice 2 through Slice 9 tables described below.
+bookkeeping table is empty. Head is `0011_corrections` and includes the
+Slice 2 through Slice 10 tables described below.
 Downgrade deliberately retains the administrative
 roles, locked schema and deny defaults; it does not drop cluster-wide roles or
 restore PUBLIC privileges. The disposable test cluster is removed separately.
@@ -446,7 +446,7 @@ assignment unchanged. RETIRED remains terminal with legal incoming graph edges,
 but production execution fails closed until disposal evidence is verifiable.
 The nullable evidence parameter exists now; a database CHECK rejects every non-null
 `evidence_ref` until Slice 11. Correction and client-operation fields are retained
-as seams only; no correction or idempotency workflow is implemented.
+as seams in the original slice. Slice 10 activates typed corrections; idempotency remains deferred.
 
 The SQL function accepts asset ID, expected version, from-state, to-state, reason,
 occurrence time, evidence reference, client operation ID, and an additional
@@ -587,7 +587,7 @@ version checks and lock retention after function return. Migration tests compare
 fresh and populated 0006 snapshots through downgrade/re-upgrade, prove no backfill,
 and check exact schema/security restoration and Alembic metadata agreement.
 
-Evidence, corrections and offline capture remain deferred; Slice 9 receiving is described below.
+Evidence and offline capture remain deferred. Slice 9 receiving and Slice 10 corrections are described below.
 
 ## Slice 7 assignment and configuration records
 
@@ -761,7 +761,7 @@ same-tenant foreign keys cover both tables. Runtime DELETE and TRUNCATE are deni
 Procurement leaves Asset versions, histories, projections and reconciliation unchanged.
 It creates no Assets or receipt records, adds no receiving or accounting workflow,
 and changes no external-reference attachment/search behavior. Procurement amendments
-express changed expectations; true record correction remains Slice 10. Receiving is
+express changed expectations; true record correction uses the bounded Slice 10 workflow. Receiving is
 implemented separately in Slice 9 below. Run the dedicated real PostgreSQL proofs with:
 
 ```powershell
@@ -937,6 +937,60 @@ and exact fresh/populated 0009 downgrade/re-upgrade restoration. Independent
 A–AG probes use HTTP workflows plus raw psycopg assertions and SQL races in a
 separate disposable cluster.
 
-Slice 10 corrections, evidence storage, labels, offline/idempotent capture,
+Evidence storage, labels, offline/idempotent capture,
 materials/lots/stock ledger, RMA/shipping, accounting, UOM conversion and
-cross-receipt fulfillment remain deferred. Slice 9 awaits independent review.
+cross-receipt fulfillment remain deferred.
+
+
+## Slice 10 — Corrections and Exception workflow
+
+Revision `0011_corrections` follows `0010_receiving`. Typed correction actions cover
+lifecycle, movement, ownership, custody, assignment, completed receipt lines, and
+unreferenced issued purchase-order line mistakes. There is no generic correction endpoint.
+
+Each correction appends one administrative REVERSAL and one complete CORRECTED
+replacement. Both name the same ordinary root and share an immutable pair identity,
+contiguous generation, normalized reason, credential-derived Actor, and administrative
+occurrence time. Original facts and timestamps remain unchanged. A reversal cancels
+recorded authority; it does not claim a physical inverse movement or lifecycle action.
+Effective history selects the newest corrected generation, while raw audit retains
+all originals and pair members.
+
+Asset corrections lock the Asset and check both expected version and effective global
+head. Each pair consumes N+1/N+2 and advances the projection to N+2. The same root may
+be corrected repeatedly until an unrelated later global event makes it ineligible.
+Assignment intervals use effective events and domain occurrence claims. No historical
+replay, direct baseline correction, configuration correction, or canonical identifier
+correction is provided.
+
+Receipt-line corrections lock PO then receipt and retain the permanent Asset creation
+bundle. They pin an immutable evaluation of all effective receipt lines and exact
+comparator sources. Changed comparators require explicit active targets; old and new
+populations are both evaluated. Quantities remain receipt-local and exact-token UOM
+comparisons; mixed UOM blocks arithmetic. Procurement corrections preserve the ordinary
+line and its supersession pointer, and reject every business-value change once a receipt
+binds that line. Future receiving explicitly supplies the expected corrected generation;
+existing receipt bindings remain generation zero.
+
+Exception observations stay immutable. Dedicated events permit OPEN to ACKNOWLEDGED,
+RESOLVED, or WAIVED, and ACKNOWLEDGED to RESOLVED or WAIVED. Terminal states require a
+note and cannot reopen. Event authority maintains the separate status/resolution
+projection. A receipt correction resolves newly false OPEN/ACKNOWLEDGED observations
+atomically; already RESOLVED/WAIVED observations keep their attribution, time and note.
+Still-supported observations retain status. Newly true or reappearing disagreements
+receive new OPEN observations with explicit evaluation provenance.
+
+`GET /exceptions/open` filters by receipt, receipt line, PO line or Asset.
+`GET /health/corrections` reports malformed pairs, source/evaluation inconsistencies,
+illegal corrected lifecycle edges, and workflow/history disagreement without repair.
+Asset reconciliation preserves every raw global version while checking effective facts.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v server/tests/slice10
+.\.venv\Scripts\python.exe -m server.tests.slice10.probe_corrections
+```
+
+The independent probe program uses a separate disposable PostgreSQL 16.15 cluster,
+HTTP workflows and raw runtime SQL checks. Slice 10 remains an uncommitted review
+candidate until its independent implementation review passes. Evidence storage,
+labels, offline capture, materials/stock, conversion and logistics remain deferred.

@@ -123,7 +123,10 @@ def test_assign_reassign_unassign_reconstructs_immutable_intervals_without_proje
     with app_connection.begin():
         set_authenticated(app_connection, a)
         history = assignment_history(app_connection, a.asset_id)
-    assert [dict(row) for row in history["events"]] == returned
+    # Ordinary events expose a NULL audit link; every stored field remains exact.
+    assert [dict(row) for row in history["events"]] == [
+        row | {"cancels_history_id": None} for row in returned
+    ]
     assert history["initial_assignment_fact"] == before[witnesses.name][0]
     assert [(i["assignee_type"], i["started_at"], i["ended_at"]) for i in history["intervals"]] == [
         ("ACTOR", times[0], times[1]),
