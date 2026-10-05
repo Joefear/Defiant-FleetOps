@@ -19,6 +19,7 @@ from fleetops.api.asset_schemas import (
     OwnershipOut,
     OwnershipRequest,
     PhysicalChangeRequest,
+    TransitionOptions,
     TransitionOut,
     TransitionRequest,
 )
@@ -64,6 +65,12 @@ def create_asset_router(authenticated: Callable[..., Iterator[RequestContext]]) 
         """Resolve permanent UUID identity through RLS."""
         with asset_errors():
             return assets.get_asset(context.connection, asset_id)
+
+    @router.get("/assets/{asset_id}/transition-options", response_model=TransitionOptions)
+    def transition_options(asset_id: UUID, context: Context):
+        """Offer current legal choices without granting offline authority."""
+        with asset_errors():
+            return assets.transition_options(context.connection, asset_id)
 
     @router.patch("/assets/{asset_id}", response_model=AssetOut)
     def patch_asset(asset_id: UUID, body: AssetPatch, context: Context):

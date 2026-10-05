@@ -1,0 +1,8 @@
+node_modules
+.next
+public/sw.js
+package-lock.json
+next-env.d.ts
+test-results
+playwright-report
+*.tsbuildinfo

@@ -143,6 +143,14 @@ class ReceivingExceptionOut(ReceivingAttributionOut):
     conflicting_asset_id: UUID | None
 
 
+class ReceiptComparatorOut(BaseModel):
+    """A reopened capture client reads the immutable acknowledged expectation source."""
+
+    po_line_id: UUID
+    source_generation: int
+    source_id: UUID | None
+
+
 class ReceiptOut(ReceivingAttributionOut):
     """Receipt completion derives from its immutable witness, not a mutable PO projection."""
 
@@ -153,5 +161,6 @@ class ReceiptOut(ReceivingAttributionOut):
     received_at: datetime
     reconciled: bool
     comparator_ids: list[UUID]
+    comparator_bindings: list[ReceiptComparatorOut]
     lines: list[ReceiptLineOut]
     exceptions: list[ReceivingExceptionOut]

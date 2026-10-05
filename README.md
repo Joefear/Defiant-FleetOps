@@ -1164,3 +1164,44 @@ OPERATION_UNAVAILABLE with no record time. Credential expiry between operations 
 401; earlier committed outcomes remain durable and are recovered by replay after login.
 DUPLICATE is response-only; PENDING_GOVERNANCE and quantity workflows remain non-producing.
 The PWA client is Slice 14. Downgrade over accepted capture records is refused.
+
+## Slice 14 — Scan-first capture client
+
+The Next.js client in `client/` provides Receive, Move, Assign, Transition and a
+rejection inbox. Every physical workflow begins with an opaque UUID scan through a
+keyboard wedge or camera. Receiving serials are scanned observations; an unreadable
+identifier records its reason. Ownership is explicit.
+
+IndexedDB durably allocates client identity, epoch, sequence and capture ordinal in
+the same transaction as each queued envelope. Sync retains the original operation ID,
+Actor, expected version and payload through loss/replay; terminal rejections appear
+with expected/current facts. Queue/cache partitions belong to the verified tenant
+and Actor. A new Actor or explicit epoch reset changes future captures only.
+
+Receipt photos remain local until raw-byte upload and a stable ATTACH_EVIDENCE capture
+both succeed. A crash/lost link response replays the original link ID. Opening and
+finishing receipts require the server; units and photos for an already opened receipt
+can queue offline. Reopened receipts expose their immutable comparator source IDs
+and generations. Receipt-bound PO corrections remain forbidden.
+
+`GET /assets/{asset_id}/transition-options` returns the observed global version,
+authoritative state and legal next states. ON_HOLD uses effective entry history,
+and RETIRED choices identify their evidence requirement. Choices are observations,
+not reservations; write admission still checks the version, lifecycle and evidence.
+
+The service worker caches static shell assets only. Bearers stay in the tab and
+worker memory, never IndexedDB/CacheStorage. Background Sync and page wake events
+use the same ordered replay path. A worker without a current credential waits.
+
+Use Node.js 22 or newer, install the checked-in client lockfile, and configure the
+server-only `FLEETOPS_API_URL` (default `http://127.0.0.1:8000`) and exact public
+`FLEETOPS_PUBLIC_ORIGIN` when behind an HTTPS reverse proxy. Browser requests pass
+through a fixed same-origin adapter; request data never selects a destination.
+Run `npm --prefix client run dev` for local capture or build/start for the production
+shell. The development server does not rewrite repository instruction files.
+
+See [the operator acceptance walkthrough](client/ACCEPTANCE.md) for setup, the Slice 9
+receiving scenario and the three-operation offline/conflict proof. Client tests run
+with `npm --prefix client run check`; live browser/PostgreSQL proofs are in
+`server/tests/slice14`. Verify the repository root before every write-capable phase.
+No new migration or deployment is introduced. Slice 15 remains deferred.

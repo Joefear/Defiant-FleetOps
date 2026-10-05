@@ -430,6 +430,21 @@ def get_receipt(connection: Connection, receipt_id: UUID):
             .order_by(receipt_comparators.c.id)
         ).scalars()
     )
+    # Offline clients must retain the receipt's acknowledged source, rather than
+    # silently replacing it with today's effective PO expectation after reopening.
+    header["comparator_bindings"] = (
+        connection.execute(
+            select(
+                receipt_comparators.c.po_line_id,
+                receipt_comparators.c.source_generation,
+                receipt_comparators.c.source_id,
+            )
+            .where(receipt_comparators.c.receipt_id == receipt_id)
+            .order_by(receipt_comparators.c.id)
+        )
+        .mappings()
+        .all()
+    )
     for key, table in (("lines", receipt_lines), ("exceptions", receiving_exceptions)):
         header[key] = (
             connection.execute(

@@ -43,6 +43,22 @@ class TransitionRequest(InputModel):
     evidence_ref: UUID | None = None
 
 
+class TransitionChoice(BaseModel):
+    """Server-owned legal state edge and its evidence requirement."""
+
+    to_state: AssetState
+    requires_evidence: bool
+
+
+class TransitionOptions(BaseModel):
+    """One consistent observation for an offline capture's original version claim."""
+
+    asset_id: UUID
+    expected_version: int
+    from_state: AssetState
+    options: list[TransitionChoice]
+
+
 class AssetOut(BaseModel):
     """Current Asset facts and descriptive attribution, addressed by permanent UUID."""
 

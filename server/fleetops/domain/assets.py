@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
 from fleetops.db.metadata import asset_identifiers, asset_transitions, assets
-from fleetops.domain.lifecycle import AssetState, LifecycleInvalid, validate_edge
+from fleetops.domain.lifecycle import LIFECYCLE, AssetState, LifecycleInvalid, validate_edge
 from fleetops.evidence.service import verify_asset_evidence
 
 
@@ -57,6 +57,59 @@ def get_asset(connection: Connection, asset_id: UUID):
     if row is None:
         raise AssetNotFound("Asset not found")
     return row
+
+
+def transition_options(connection: Connection, asset_id: UUID):
+    """Offer server-owned choices from one tenant-scoped statement snapshot (D3/D8).
+
+    The current global version includes orthogonal operations. State history may have
+    a lower result version, but never one ahead of the Asset. Choices are observations,
+    not reservations: capture admission still locks and rechecks the original version.
+    """
+    row = (
+        connection.execute(
+            text("""
+        SELECT a.id, a.current_state, a.version, h.id AS history_id,
+               h.from_state, h.to_state, h.result_version
+        FROM fleetops.assets a
+        LEFT JOIN LATERAL (
+            SELECT t.id, t.from_state, t.to_state, t.result_version
+            FROM fleetops.effective_asset_transitions t
+            WHERE t.org_id=a.org_id AND t.asset_id=a.id
+            ORDER BY t.result_version DESC LIMIT 1
+        ) h ON true
+        WHERE a.id=:asset_id
+        """),
+            {"asset_id": asset_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise AssetNotFound("Asset not found")
+    if (
+        row["history_id"] is None
+        or row["to_state"] != row["current_state"]
+        or row["result_version"] > row["version"]
+    ):
+        raise AssetConflict("Authoritative state history is missing or inconsistent")
+    state = AssetState(row["to_state"])
+    allowed = LIFECYCLE[state]
+    if state == AssetState.ON_HOLD:
+        # Dynamic exits come from effective entry history, including corrections;
+        # neither a client field nor a mutable projection can invent a prior state.
+        if row["from_state"] is None:
+            raise AssetConflict("Authoritative ON_HOLD entry state is missing")
+        allowed = allowed | {AssetState(row["from_state"])}
+    return {
+        "asset_id": row["id"],
+        "expected_version": row["version"],
+        "from_state": state,
+        "options": [
+            {"to_state": value, "requires_evidence": value == AssetState.RETIRED}
+            for value in sorted(allowed)
+        ],
+    }
 
 
 def patch_asset(connection: Connection, asset_id: UUID, *, performer_id: UUID, values: dict):
