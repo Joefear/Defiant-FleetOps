@@ -370,6 +370,8 @@ def test_http_scope_has_no_later_slice_or_user_management_routes(client):
         ("GET", "/assets/{asset_id}/configurations"),
         ("GET", "/assets/{asset_id}/configurations/current"),
         ("GET", "/health/assets/reconciliation"),
+        ("GET", "/assets/{asset_id}/history"),
+        ("GET", "/health/reconciliation"),
         ("POST", "/purchase-orders"),
         ("GET", "/purchase-orders"),
         ("GET", "/purchase-orders/{po_id}"),

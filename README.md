@@ -1204,4 +1204,55 @@ See [the operator acceptance walkthrough](client/ACCEPTANCE.md) for setup, the S
 receiving scenario and the three-operation offline/conflict proof. Client tests run
 with `npm --prefix client run check`; live browser/PostgreSQL proofs are in
 `server/tests/slice14`. Verify the repository root before every write-capable phase.
-No new migration or deployment is introduced. Slice 15 remains deferred.
+No new migration or deployment is introduced.
+
+
+## Slice 15 — History reconstruction and v0.1 acceptance
+
+`GET /assets/{asset_id}/history` returns current projections and the retained audit
+entries from one tenant-scoped database snapshot. Entries are presented by claimed
+occurrence time with deterministic ties. Global `result_version` and correction
+pointers remain explicit: clocks do not determine current physical authority.
+`configuration_order` separately lists visible configuration IDs in database
+allocation order from that same snapshot; its last ID is current, and an empty
+list means none. It preserves configuration authority under backward clocks
+without exposing the shared sequence or producing an Asset version.
+Originals, every administrative reversal and corrected generation remain visible;
+`cancels_history_id` names the authority cancelled by a reversal.
+
+History includes immutable receipt/vendor context, the exact PO comparator and its
+selected correction generation, precise decimal price strings, identifiers, initial
+physical and assignment witnesses, every transition/movement/custody/ownership/
+assignment/configuration, receiving and sync exceptions/status events, and evidence
+captures/links for the Asset, receipt, receipt line, configuration and exception.
+Serial-collision observations preserve their context without becoming another receipt
+of the existing Asset. Shared receipt or comparator exceptions retain their original
+references; unrelated unit-specific observations are excluded.
+
+Each entry exposes Actor and both timestamps. Where the accepted schema records only
+creation or link time, `occurred_at_source` explicitly identifies that recorded
+instant rather than claiming an independent physical event time. Attachments expose
+their own captured time/Actor separately from the later link. Missing receipt or
+initial facts remain absent. Vendor identity is historical; the optional vendor
+display name is the currently visible Party description. Storage paths, transaction
+IDs and the global configuration sequence are excluded.
+
+`GET /health/reconciliation` aggregates the existing per-class projections/baselines,
+combined global version producers, correction/evaluation/workflow anomalies and
+Python-owned corrected lifecycle legality from one snapshot. `discrepancy_count`
+counts unique affected domain records; detailed original categories remain visible.
+Neither read endpoint repairs data. Both require a current bearer session.
+
+Run the complete API acceptance scenario and focused reconstruction/snapshot proofs:
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m pytest server/tests/acceptance/test_v0_1_scenario.py server/tests/slice15 -q
+```
+
+The scenario receives the exact ugly delivery, labels/scans all nine units, configures
+and assigns them, replays an original stale offline state claim, corrects a mistaken
+movement, replaces a failed workstation, retires it with disposal evidence, and
+reconstructs its history. Reconciliation is clean, then detects one owner-injected
+discrepancy in the disposable test database. Live browser/network outage acceptance
+remains in Slice 14; the API scenario does not replace physical hardware validation.
+No new migration, integration, reporting layer or deferred workflow is introduced.

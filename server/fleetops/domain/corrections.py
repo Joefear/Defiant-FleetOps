@@ -224,14 +224,7 @@ def audit_rows(rows, root_field):
     return rows
 
 
-def lifecycle_correction_issues(connection: Connection, *, asset_id=None):
-    """Check every corrected lifecycle edge in Python, including superseded generations.
-
-    The graph remains Python-owned. SQL supplies effective pre-root context, never
-    interprets administrative REVERSAL as a physical edge, and never repairs history.
-    """
-    rows = connection.execute(
-        text("""
+LIFECYCLE_ISSUES_SQL = """
       SELECT c.org_id,c.asset_id,c.to_state,p.from_state AS previous_state,p.to_state AS from_state,
         fleetops.valid_asset_evidence(c.org_id,c.evidence_ref,c.asset_id,'DISPOSAL_EVIDENCE')
           AS disposal_valid
@@ -245,9 +238,24 @@ def lifecycle_correction_issues(connection: Connection, *, asset_id=None):
       ) p ON true
       WHERE c.correction_role='CORRECTED'
         AND (CAST(:asset_id AS uuid) IS NULL OR c.asset_id=CAST(:asset_id AS uuid))
-    """),
+    """
+
+
+def lifecycle_correction_issues(connection: Connection, *, asset_id=None):
+    """Check every corrected lifecycle edge in Python, including superseded generations.
+
+    The graph remains Python-owned. SQL supplies effective pre-root context, never
+    interprets administrative REVERSAL as a physical edge, and never repairs history.
+    """
+    rows = connection.execute(
+        text(LIFECYCLE_ISSUES_SQL),
         dict(asset_id=asset_id),
     ).mappings()
+    return classify_lifecycle_issues(rows)
+
+
+def classify_lifecycle_issues(rows):
+    """Apply the same Python-owned lifecycle rules to one supplied snapshot."""
     invalid = {}
     for row in rows:
         try:

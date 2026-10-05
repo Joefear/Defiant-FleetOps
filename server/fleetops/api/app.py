@@ -15,6 +15,7 @@ from fleetops.api.capture import create_capture_router
 from fleetops.api.catalog import create_catalog_router
 from fleetops.api.context import RequestContext
 from fleetops.api.evidence import create_evidence_router
+from fleetops.api.history import create_history_router
 from fleetops.api.labels import create_label_router
 from fleetops.api.procurement import create_procurement_router
 from fleetops.api.receiving import create_receiving_router
@@ -178,4 +179,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(create_label_router(authenticated, output_root=settings.label_output_root))
     app.include_router(create_capture_router(authenticated, engine, bearer, evidence_storage))
+    app.include_router(create_history_router(authenticated))
     return app
